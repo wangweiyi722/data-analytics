@@ -1,0 +1,635 @@
+---
+title: "Nathan"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+runtime: shiny
+resource_files:
+- .Renviron
+---
+
+```{r setup, include=FALSE}
+require(tidyverse)
+require(data.world)
+require(dplyr)
+require(MASS)
+require(ISLR)
+require(tidyverse)
+require(data.world)
+require(ggplot2)
+require(glmnet)
+require(leaps)
+require(boot)
+require(knitr)  # ADD THIS
+require(class)  # ADD THIS
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **R Session Info**  
+
+```{r}
+sessionInfo()
+```
+
+## **Github Link** 
+https://github.com/isabelcachola/CS329
+
+## **Data.world Link**
+https://data.world/wangweiyi722/f-17-eda-project-5/
+
+## Disclaimer
+Not all data.world insights are fully represented in this RMD document. Please view data.world for deeper analysis
+
+##Link
+https://data.world/wangweiyi722/f-17-eda-project-5/insights
+
+##Reading Data
+```{r,label="Getting data"}
+project<- "https://data.world/wangweiyi722/f-17-eda-project-5"
+data.world::set_config(cfg_env("DW_API"))
+
+
+fy16_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy16_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy16_school_budget_data  <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy16_school_budget_data"),
+  dataset = project
+)
+public_schools_3 <- data.world::query(
+  data.world::qry_sql("SELECT * FROM public_schools_3"),
+  dataset = project
+)
+wards_info <- data.world::query(
+  data.world::qry_sql("SELECT * FROM ward_from_2012_2"),
+  dataset = project
+)
+enrollment_changes <- data.world::query(
+  data.world::qry_sql("SELECT * FROM enrollment_changes_2"),
+  dataset = project
+)
+```
+
+##**Enrollment Fluctuation**
+
+### Intro
+
+```{r}
+# Building the data frame
+df <- fy16_school_budget_data %>%
+    dplyr::filter(budget_allocation_category=="Enrollment") %>%
+    dplyr::inner_join(
+      fy16_budgeted_student_enrollment_data,
+      by="school_name") %>%
+    dplyr::inner_join(
+      public_schools_3,
+      by=c("school_code"="school_id")
+    ) %>%
+    dplyr::mutate(
+      enrollment_up=
+        ifelse(
+          change_in_enrollment_from_fy15>0,TRUE,FALSE))
+
+  original = 
+    df$fy16_budgeted_enrollment - 
+    df$change_in_enrollment_from_fy15
+  difference = 
+    df$fy16_budgeted_enrollment -
+    original
+  enrollment_perc_change = (difference / original) * 100
+  df <- data.frame(df, enrollment_perc_change)
+
+  wards_pop_info <- data.frame(
+    wards_info$ward,
+    wards_info$pop_2010,
+    wards_info$pop_2015
+  )
+  colnames(wards_pop_info) <- c("ward","pop_2010","pop_2015")
+  wards_pop_info <- dplyr::mutate(
+    wards_pop_info,
+    ward_pop_perc_change=(
+      ((pop_2015-pop_2010)/pop_2010)*100
+    )
+  )
+  df <- df %>%
+    dplyr::inner_join(
+      wards_pop_info,
+      by=c("ward.x"="ward")
+    )
+```
+
+I looked at schools' enrollment fluctuation between 2015 and 2016. I was not trying to predict any budgetary changes, just enrollment fluctuation. 
+
+**Why enrollment fluctuation?**
+Filtering the dataset, I saw schools with a shocking amount of flux between 2015 and 2016 in their number of enrolled students. For example, see the far-right column, below.
+
+```{r,label="build df1"}
+df1 <- df %>%
+  dplyr::filter(school_code>=221&school_code<=232) %>%
+  dplyr::select(
+    school_name,
+    fy16_budgeted_enrollment,
+    change_in_enrollment_from_fy15,
+    enrollment_perc_change
+  )
+kable(df1, format="markdown")
+```
+
+Notice the school with 30% change. How do its teachers deal with 30% more students one year to the next? 
+
+What factors play into a school's change in enrollment? 
+
+### Wards of D.C.
+
+`Ward` will often show up as a predictor in my models. 
+
+DC is divided into 8 wards. 
+
+![](https://media.data.world/UVJdiV4MSxa2H2fHDtCg_image.png)
+
+### **Predicting Enrollment Rise or Decline**{.tabset .tabset-fade}
+
+#### Ward as Predictor
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/7e5e9420-6c27-40bc-b21c-7a0aaec39ada
+
+Initially, I wondered why a school's enrollment might rise or decline. 
+
+We can see that ward makes a difference:
+
+```{r}
+ggplot(df, aes(factor(ward.x),fill=enrollment_up)) +
+  geom_bar(position="dodge") +
+  scale_fill_manual(values=c("#D55E00","#009E73"))
+```
+
+*The plot shows the number of schools per ward where enrollment rose and declined between 2015 and 2016. Green = up; red = down.*
+
+**Why might ward make a difference?** It may be that a ward's overall population change can account for its schools' rise or decline in enrollment. It may also be that school policies are set at the ward level rather than the municipal level.
+
+(See next tab)
+
+#### K-Nearest Neighbors
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/b3dfebbe-daff-4c0d-8e59-2cb73ff670b9
+
+**In addition to ward, at-risk students might make a difference.** A high proportion of at-risk students may be more likely to lead to a decline in enrollment. 
+
+```{r}
+ggplot(df,aes(x=at_risk_students*100,y=ward_pop_perc_change)) +
+  geom_point(aes(colour=enrollment_up)) +
+  ggtitle("Enroll Rise/Fall vs. % At-Risk Students and Ward Pop % Change 2010-2015")
+```
+
+There's no clear decision boundary, but let's try KNN just to be sure: 
+
+```{r}
+Xlag=cbind(df$at_risk_students*100, df$ward_pop_perc_change)
+train=sample(1:nrow(df),.7*nrow(df))
+x=df[train,]
+y=df[-train,]
+knn.pred=knn(Xlag[train,],Xlag[-train,],df$enrollment_up[train],k=1,prob=TRUE)
+table(knn.pred,df$enrollment_up[-train])
+mean(knn.pred==df$enrollment_up[-train])
+```
+
+Because of the small test set size, that number varies wildly. **LDA** and **QDA** play out the same way.
+
+### **Predicting Enrollment Percent Change**{.tabset .tabset-fade}
+
+#### Intro
+The problem with predicting enrollment rise or decline is that enrollment might only change by 1 student or it might change by 900. "Enrollment rise" really isn't a good category. 
+
+It'd be better to predict **enrollment percent change between 2015 and 2016**.
+
+In the plot below, I've mapped each school to its latitude and longitude. The school's color indicates its percent change in enrollment, and its shape represents its ward.
+
+```{r}
+  ggplot(df,aes(x=longitude,y=latitude)) +
+    geom_point(aes(shape=ward.x,
+                   color=sqrt(enrollment_perc_change^2),
+                   size=3)) +
+    scale_shape_identity() +
+    scale_colour_gradientn(colours = terrain.colors(5)) +
+    ggtitle("2015-2016 Enrollment Fluctuation, by Ward")
+```
+
+(See next tab)
+
+#### Strategy
+
+To model enrollment fluctuation, I relied on **boosting** and **subset selection**. 
+
+I decided to use these methods because they are exhaustive. If these two exhaustive methods were consistently giving me very poor R^2s and RMSEs, it meant that the problem lay with the *predictors* more than with the modelling method. 
+
+In other words, I could have tried a hundred different types of model, but if I was passing them all useless data, they wouldn't do much better than subset selection or boosting.
+
+Consequently, I focused on linking in new datasets and coming up with new predictors from the data. 
+
+(See next tab)
+
+#### Boosting
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/845fe935-b954-4571-b525-cc2687ebd4b2
+
+The problem with relying on ward as a predictor is that there are 101 schools and only 8 wards. Something more targeted, like the school's zip code, might work better.
+
+I hypothesized that the school's zip code would be a very powerful predictor for the percent change in the school's enrollment. Let's use boosting to check that hypothesis.
+
+```{r include=FALSE}
+require(gbm)
+```
+```{r}
+train=sample(1:nrow(df),.7*nrow(df))
+boost.enrollment=gbm(
+  enrollment_perc_change~
+    as.factor(ward.x)+
+    as.factor(school_type.x)+
+    at_risk_students+
+    early_childhood+
+    english_language_learners+
+    special_education+
+    homeless_foster+
+    direct_certs+
+    X1_year_older_for_grade+
+    ward_pop_perc_change+
+    as.factor(zip_code),
+  data=df[train,],
+  distribution="gaussian",
+  n.trees=10000,
+  shrinkage=0.01,
+  interaction.depth=4)
+
+sum = summary(boost.enrollment)
+relinf=sum$rel.inf
+kable(data.frame(as.character(sum$var),relinf), format="markdown")
+```
+
+As expected, a school's zip code played a relatively large role in how enrollment changed between 2015 and 2016. Although this list looks different depending on the run, we can see that ward (compared with zip code) is not a relatively strong predictor.
+
+```{r}
+n.trees=seq(from=100,to=10000,by=100)
+pred.boost = predict(boost.enrollment,newdata=df[-train,],n.trees=n.trees)
+boost.err=with(df[-train,],apply((pred.boost-enrollment_perc_change)^2,2,mean))
+boost.rmse=sqrt(boost.err)
+plot(n.trees,boost.rmse,pch=19,ylab="RMSE", xlab="# Trees",main="Boosting Test Error")
+```
+
+(See next tab)
+
+#### Model Selection
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/1f1504f0-66e3-47ce-8842-1373c8c2d305
+
+I decided to try model selection using four variables:
+
+* The school type (elementary, middle...)
+* The school's ward
+* The school's zip code
+
+Because of our small testing set, I ran subset selection four times, each with a different seed value and therefore different training set. Each colored line below represents a different seed value. 
+
+```{r, warning=FALSE, message=FALSE, label="Model selection 1"}
+get_train=function(seed,df){
+  set.seed(seed)
+  train=sample(seq(nrow(df)),62,replace=FALSE)
+  return(train)
+}
+
+get_fit1=function(){
+  # subset selection
+  regfit=regsubsets(
+    enrollment_perc_change~
+      as.factor(school_type.y)+
+      as.factor(ward.x)+
+      as.factor(zip_code),
+    data=df[train,],
+    nvmax=27)
+  
+  return(regfit)
+}
+
+get_err1 = function(fit) {
+  val.errors=rep(NA,7)
+  x.test=model.matrix(
+    enrollment_perc_change~
+      as.factor(school_type.y)+
+      as.factor(ward.x)+
+      as.factor(zip_code),
+    data=df[-train,])
+  
+  for(i in 1:7){
+    coefi=coef(fit,id=i)
+    pred=x.test[,names(coefi)]%*%coefi
+    val.errors[i]=mean((df$enrollment_perc_change[-train]-pred)^2)
+  }
+  return(val.errors)
+}
+
+make_plots1=function(fit1,err1,fit2,err2,fit3,err3,fit4,err4){
+  par(mfrow=c(2,2))
+  
+  # RMSE
+  plot(sqrt(err1),pch=19,type="b",xlab="Variables",ylab="RMSE",main="RMSE",ylim=c(9,17))
+  points(sqrt(err2),type="b",col="red")
+  points(sqrt(err3),type="b",col="blue")
+  points(sqrt(err4),type="b",col="green")
+  
+  # Cp
+  sum1=summary(fit1)
+  sum2=summary(fit2)
+  sum3=summary(fit3)
+  sum4=summary(fit4)
+  #plot(sum1$cp,pch=19,type="b",xlab="Variables",ylab="Cp",main="Cp",ylim=c(-7,23))
+  plot(sum1$cp,pch=19,type="b",xlab="Variables",ylab="Cp",main="Cp",ylim=c(-15,30))
+  points(sum2$cp,type="b",col="red")
+  points(sum3$cp,type="b",col="blue")
+  points(sum4$cp,type="b",col="green")
+  
+  plot(sum1$adjr2,pch=19,type="b",xlab="Variables",ylab="Cp",main="Adj R^2",ylim=c(-.1,.45))
+  points(sum2$adjr2,type="b",col="red")
+  points(sum3$adjr2,type="b",col="blue")
+  points(sum4$adjr2,type="b",col="green")
+  
+  plot(sum1$bic,pch=19,type="b",xlab="Variables",ylab="Cp",main="BIC",ylim=c(-15,80))
+  points(sum2$bic,type="b",col="red")
+  points(sum3$bic,type="b",col="blue")
+  points(sum4$bic,type="b",col="green")
+  
+  par(mfrow=c(1,1))
+}
+
+## Best Subset Selection using zips but not change over time
+train=get_train(1,df);fit1=get_fit1();err1=get_err1(fit1)
+train=get_train(6,df);fit6=get_fit1();err6=get_err1(fit6)
+train=get_train(7,df);fit7=get_fit1();err7=get_err1(fit7)
+train=get_train(9,df);fit9=get_fit1();err9=get_err1(fit9)
+
+make_plots1(fit1,err1,fit6,err6,fit7,err7,fit9,err9)
+```
+
+The most representative selection seems to be seed=7 (green). 
+
+(See next tab)
+
+#### Model Selection 2
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/1f1504f0-66e3-47ce-8842-1373c8c2d305
+
+I introduced two new variables:
+
+* The school's percent change in enrollment between 2013 and 2014
+* The school's percent change in enrollment between 2014 and 2015
+
+to capture the school's shift in enrollment in previous years. I hoped that if we could capture the school's shifts in previous years, we would be better able to predict that school's shift in enrollment between 2015 and 2016.
+
+Once again, I ran selection four times with four different seed values / test sets.
+
+```{r, warning=FALSE, label="Model selection 2"}
+set_df6 = function() {
+  ec <- enrollment_changes[complete.cases(enrollment_changes), ] %>%
+    dplyr::mutate(
+      enrollment_perc_change_2013_to_2014 = (
+        (enrollment_2014-enrollment_2013)/enrollment_2013*100
+      ),
+      enrollment_perc_change_2014_to_2015 = (
+        (enrollment_2015-enrollment_2014)/enrollment_2014*100
+      ),
+      enrollment_perc_change_2015_to_2016 = (
+        (enrollment_2016-enrollment_2015)/enrollment_2015*100
+      )
+    )
+  df6 <- df %>%
+    dplyr::inner_join(ec,by="school_code")
+  return(df6)
+}
+
+get_fit2=function(){
+  # subset selection
+  regfit=regsubsets(
+    enrollment_perc_change~
+      as.factor(school_type.y)+
+      as.factor(ward.x)+
+      as.factor(zip_code)+
+      enrollment_perc_change_2013_to_2014+
+      enrollment_perc_change_2014_to_2015,
+    data=df6[train,],
+    nvmax=30)
+
+  return(regfit)
+}
+
+get_err2 = function(fit) {
+  val.errors=rep(NA,7)
+  x.test=model.matrix(
+    enrollment_perc_change~
+      as.factor(school_type.y)+
+      as.factor(ward.x)+
+      as.factor(zip_code)+
+      enrollment_perc_change_2013_to_2014+
+      enrollment_perc_change_2014_to_2015,
+    data=df6[-train,])
+
+  for(i in 1:7){
+    coefi=coef(fit,id=i)
+    pred=x.test[,names(coefi)]%*%coefi
+    val.errors[i]=mean((df6$enrollment_perc_change[-train]-pred)^2)
+  }
+  return(val.errors)
+}
+
+make_plots2=function(fit1,err1,fit2,err2,fit3,err3,fit4,err4){
+  par(mfrow=c(2,2))
+
+  # RMSE
+  plot(sqrt(err1),pch=19,type="b",xlab="Variables",ylab="RMSE",main="RMSE",ylim=c(9,14))
+  points(sqrt(err2),type="b",col="red")
+  points(sqrt(err3),type="b",col="blue")
+  points(sqrt(err4),type="b",col="green")
+
+  # Cp
+  sum1=summary(fit1)
+  sum2=summary(fit2)
+  sum3=summary(fit3)
+  sum4=summary(fit4)
+  plot(sum1$cp,pch=19,type="b",xlab="Variables",ylab="Cp",main="Cp",ylim=c(-15,40))
+  points(sum2$cp,type="b",col="red")
+  points(sum3$cp,type="b",col="blue")
+  points(sum4$cp,type="b",col="green")
+
+  plot(sum1$adjr2,pch=19,type="b",xlab="Variables",ylab="Cp",main="Adj R^2",ylim=c(0,.45))
+  points(sum2$adjr2,type="b",col="red")
+  points(sum3$adjr2,type="b",col="blue")
+  points(sum4$adjr2,type="b",col="green")
+
+  plot(sum1$bic,pch=19,type="b",xlab="Variables",ylab="Cp",main="BIC",ylim=c(-10,80))
+  points(sum2$bic,type="b",col="red")
+  points(sum3$bic,type="b",col="blue")
+  points(sum4$bic,type="b",col="green")
+
+  par(mfrow=c(1,1))
+}
+
+# zips and change over time
+df6 <- set_df6()
+train=get_train(1,df6);fit1=get_fit2();err1=get_err2(fit1)
+train=get_train(2,df6);fit2=get_fit2();err2=get_err2(fit2)
+train=get_train(3,df6);fit3=get_fit2();err3=get_err2(fit3)
+train=get_train(9,df6);fit9=get_fit2();err9=get_err2(fit9)
+
+make_plots2(fit1,err1,fit2,err2,fit3,err3,fit9,err9)
+```
+
+The most representative selection seems to be seed=1 (black).
+
+(See next tab)
+
+#### Comparing Model Selection
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/1f1504f0-66e3-47ce-8842-1373c8c2d305
+
+Below, I've re-plotted the two most representative selections. The line from the 'Model Selection' tab is black here; the line from the 'Model Selection 2' tab is red. 
+
+```{r}
+make_plots3=function(fit1,err1,fit2,err2){
+  par(mfrow=c(2,2))
+  
+  plot(sqrt(err1),pch=19,type="b",xlab="Variables",ylab="RMSE",main="RMSE",ylim=c(9,17))
+  points(sqrt(err2),type="b",col="red")
+  
+  # Cp
+  sum1=summary(fit1)
+  sum2=summary(fit2)
+  plot(sum1$cp,pch=19,type="b",xlab="Variables",ylab="Cp",main="Cp",ylim=c(-15,30))
+  points(sum2$cp,type="b",col="red")
+  
+  plot(sum1$adjr2,pch=19,type="b",xlab="Variables",ylab="Cp",main="Adj R^2",ylim=c(0,.45))
+  points(sum2$adjr2,type="b",col="red")
+  
+  plot(sum1$bic,pch=19,type="b",xlab="Variables",ylab="Cp",main="BIC",ylim=c(-10,80))
+  points(sum2$bic,type="b",col="red")
+  
+  par(mfrow=c(1,1))
+}
+
+make_plots3(fit7,err7,fit1,err1)
+```
+
+Remember that the red line represents the models that *do* use the variables measuring enrollment percent changes from previous years. Amazingly, those models do worse than the models that leave out those predictors. That suggests that not only is shift from previous years insignificant, but also it's a distraction from better predictors. 
+
+Our models' Cp and BIC values indicate that we risk overfitting as we rise above 10 predictors. Moreover, our combined low RMSE and low R^2 indicate that, while our model is seldom very far off, it's also almost never on the money. 
+
+If we optimize the Cp, BIC, and R^2 values, we can see that a model using four predictors, from our first subset selection, is going to be our best bet. 
+
+In the plot below, that model is represented by the top row:
+```{r}
+plot(fit7,scale="bic")
+```
+
+(See next tab)
+
+#### Residual analysis
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/4904bb6c-9e9d-475c-a1d6-9d4f8bf87ba8
+
+My next step is to look at the residuals and try to detect any patterns there. To get started with analyzing the residuals of my model, I decided to plot them by latitude and longitude. I hoped we could show graphically that some wards have high residuals and others have low.
+
+The model I use here is the model we selected at the bottom of the 'Comparing Model Selection' tab. It uses the following predictors:
+
+```{r}
+coef(fit7,id=4)
+```
+
+```{r}
+x.test=model.matrix(
+  enrollment_perc_change~
+    as.factor(school_type.y)+
+    as.factor(ward.x)+
+    as.factor(zip_code),
+  data=df[-train,])
+coefi=coef(fit7,id=4)
+pred=x.test[,names(coefi)]%*%coefi
+
+# So that's 38 residuals, one for each row of testing data.
+
+# Now let's make two datasets. The first is df7_all, and it contains every data point; whichever data points were in the testing set have their errors attached. The second is df7_test, and it only has the testing data.
+set_df7_all = function() {
+  d7a <- df[-train,] %>%
+    dplyr::mutate(
+      pred_val=pred,
+      error=sqrt((enrollment_perc_change-pred_val)^2)
+    ) %>%
+    dplyr::select(
+      school_code,
+      pred_val,
+      error
+    )
+  df7_all <- df %>%
+    dplyr::left_join(
+      d7a,
+      by="school_code"
+    )
+  return(df7_all)
+}
+
+set_df7_test = function() {
+  df7_test <- data.frame(
+    df[-train,], pred) %>%
+    dplyr::mutate(
+      error=sqrt((enrollment_perc_change-pred)^2))
+  return(df7_test)
+}
+
+df7_all <- set_df7_all()
+df7_test <- set_df7_test()
+
+ggplot(df7_test,aes(x=longitude,y=latitude)) +
+  geom_point(aes(shape=ward.x,
+                 colour=error,
+                 size=3)) +
+  scale_shape_identity() +
+  scale_colour_gradientn(colours = terrain.colors(5)) + 
+  ggtitle("Residual by Ward (Testing data only)")
+```
+
+Each distinct shape represents a ward. Looking at that map, we're reminded what it means to have a low R^2 and a low RMSE: our model's predictions are seldom far off, but we're almost never right on the money.
+
+The wards where we did best look to be Ward 1 (the empty circle) and Ward 6 (the upside-down triangle). We did worst in Ward 8 (the asterisk).
+
+Here's a look at the same plot using the whole dataset. Training data is in gray, and testing data is colored (as above).
+
+```{r}
+  ggplot(df7_all,aes(x=longitude,y=latitude)) +
+    geom_point(aes(shape=ward.x,
+                   colour=error,
+                   size=3)) +
+    scale_shape_identity() +
+    scale_colour_gradientn(colours = terrain.colors(5)) +
+    ggtitle("Residual by Ward (Training data in gray)")
+```
+
+It definitely seems like our model's performance varied by ward. 
+
+Ward 8 (the asterisk) interests me most here. It seems to have the highest variance of residuals, and I wonder if that means it also has a very high variance of 2015-2016 enrollment fluctuation. If so, it could be confounding my attempts to model all the wards separately. 
+
+### **Interesting Findings**{.tabset .tabset-fade}
+
+#### Interesting Findings
+
+* **D.C. public schools' enrollment is not constant from year to year.** Between 2015 and 2016, at least one school experienced a *60%* shift in its number of enrolled students.
+
+* **We can't predict a school's percent change in enrollment based on its percent change in prior years.** As we showed in the Predicting Enrollment Percent Change -> Comparing Model Selection tab, including a school's shift over previous years actually *worsens* the model. That's a pretty stunning finding. 
+
+* **The best and most consistent predictor of a school's percent change in enrollment was the school's zip code.** Likely, environmental factors are affecting how many students enroll in the school. 
+
+* **Even including zip code, virtually no predictors in our dataset have a strong influence on enrollment percent change.** That means that enrollment percent change is decided by factors outside of our dataset, perhaps political/electoral factors. I'm positive that there is *some* model that could be made to predict at least 90% of the fluctuation in a school's enrollment. 
+
+(See next tab)
+
+#### Flaws in My Approach
+
+* I should have predicted the absolute value of the school's percent change in enrollment, not included positive and negative change. Without meaning to, I ended up trying to predict two things at once: how much the school changed, and whether its enrollment rose or fell. 
+
+* I could have used more model types than only boosting and model selection. But I figured that if these two exhaustive techniques were giving me poor results, the problem lay with the predictors. Linking new datasets seemed a better use of my time than building other model types on the same bad predictors.
+
+* I could have used bootstrap. As I've discussed in detail on data.world, cross-validation didn't work for my data because of the sheer number of zip code categories I had. That left simple validation using a test set of about 30 observations. I did a kind of manual cross-val to avoid skewed results: every time I made a model, I ran the code four times on four random train/test sets, then selected the most representative result. Bootstrap would have been more elegant. 

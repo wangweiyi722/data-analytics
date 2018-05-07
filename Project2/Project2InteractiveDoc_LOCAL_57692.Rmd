@@ -1,0 +1,567 @@
+---
+title: "Project 2"
+author: 'Group 10: Nathan Caldwell, Isabel Cachola, Edward Gunawan, Weiyi Wang'
+resource_files:
+- .Renviron
+output:
+  html_notebook:
+    code_folding: hide
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+require(data.world)
+knitr::opts_chunk$set(echo = TRUE)
+```
+  
+## **R Session Info**  
+
+```{r}
+sessionInfo()
+```
+
+## **Github Link** 
+https://github.com/isabelcachola/CS329
+
+
+## **Introduction** 
+This dataset combines 2016 election data with basic demographic data from the US census such as race and education. We then perform logistic regression, linear discriminant analysis, quadratic discriminant analysis and K-nearest neighbor analysis to see if any of the features are effective in predicting whether Trump or Clinton win the state.
+
+## **Minority Population**{.tabset .tabset-fade}
+
+### Linear Discriminant Analysis
+```{r}
+library(tidyverse)
+require(dplyr)
+require(data.world)
+require(MASS)
+project <- "https://data.world/ncaldw01/election-results"
+
+data.world::set_config(cfg_env("DW_API"))
+
+df <- data.world::query(
+  data.world::qry_sql("SELECT * FROM electionsdata2"),
+  dataset = project
+)
+
+
+sdf = dplyr::select(df, state, votes, votes16_trumpd, votes16_clintonh, pop_vote_winner, at_least_bachelor_s_degree, white_not_latino_population, african_american_population, native_american_population, asian_american_population, population_some_other_race_or_races, latino_population)
+
+sdf = dplyr::mutate(sdf,perc_minority =  african_american_population+ native_american_population+ asian_american_population+ population_some_other_race_or_races+ latino_population)%>%arrange(votes)
+
+# Create a training data set using the 25 states with the lowest number of votes.
+training = sdf%>% dplyr::filter(votes<2000000)
+testing = sdf%>% dplyr::filter(votes>2000000)
+
+# Use the perc_minority column from the testing data to make a lda model predicting whether Trump or Clinton won that state
+election_lda = lda(pop_vote_winner~perc_minority,data = training)
+election_lda
+election_lda_pred = predict(election_lda,testing)
+table(election_lda_pred$class,testing$pop_vote_winner)
+
+
+renderPlot(plot(election_lda))
+```
+
+### Explanation and insights of LDA
+
+You can see from the confusion matrix that this model did not do a very good job predicting whether or not Hillary or Trump won that state. In fact it did a terrible job, 15 incorrect vs 10 correct. There was actually a pretty large disparity between the minority populations that each candidate won in the training dataset, with Hillary states at 28% and Trump states  This may suggest that the training data is not representative of the testing data. In this case, the 25 states with the fewest votes were used to predict the results of the remaining states, which may not be the best way to create a testing data set. We should probably try a different distribution of training/testing data across the 50 states to see if we can get a better model.
+
+
+### LDA Part2
+```{r}
+# Create a training set using randomly selected states. In this case I just go with the first 25 states according to alphabetical order.
+training = sdf%>% dplyr::filter(state<"Montana")
+testing = sdf%>% dplyr::filter(state>"Missouri")
+
+# Use the perc_minority column from the testing data to make a lda model predicting whether Trump or Clinton won that state
+election_lda = lda(pop_vote_winner~perc_minority,data = training)
+election_lda
+election_lda_pred = predict(election_lda,testing)
+table(election_lda_pred$class,testing$pop_vote_winner)
+
+
+renderPlot(plot(election_lda))
+```
+### Explanation of LDA part 2
+
+We see that the predictions are better than before. 56% accuracy as compared to the previous 40% accuracy. This means that this separation of testing and training data is more appropriate than the previous division. This also suggests that the states with the fewest votes did not follow a similar pattern to the states with more votes, which would explain why the model generated from the training data is not good at predicting the results of the testing data. We will be using these new testing and training sets from now on. (Note: I know I could have chosen the training and testing sets completely randomly using the runif() function, but for the sake of keeping the data consistent, I decided to arbitrarily split it, so that the data would be the same with each run of the RMarkdown file)
+
+
+### Logistic Regression
+
+```{r}
+sdf = dplyr::mutate(sdf,trump1hillary0 = if_else(votes16_trumpd>votes16_clintonh,1,0))
+
+training = sdf%>% dplyr::filter(state>"Montana")
+testing = sdf%>% dplyr::filter(state>"Missouri")
+
+perc_min_logis_fit=glm(trump1hillary0~perc_minority, data = training, family = "binomial")
+perc_min_logis_probs=predict(perc_min_logis_fit,newdata=testing,type="response") 
+perc_min_logis_pred=ifelse(perc_min_logis_probs >0.55,"Trump","Clinton")
+winner=testing$pop_vote_winner
+table(perc_min_logis_pred,winner)
+mean(perc_min_logis_pred==winner)
+perc_min_logis_probs
+renderPlot(ggplot(testing,aes(x=perc_minority,y=trump1hillary0))+geom_point()+stat_smooth(method="glm",method.args=list(family="binomial"),se=F))
+```
+
+### Quadratic Discriminate Analysis
+
+```{r}
+election_qda = qda(pop_vote_winner~perc_minority,data = training)
+election_qda_pred = predict(election_qda,testing)
+table(election_qda_pred$class,testing$pop_vote_winner)
+```
+
+### K-nearest neighbor
+
+```{r}
+require(class)
+
+perc_min_knn_pred=knn(data.frame(training$perc_minority),data.frame(testing$perc_minority),training$pop_vote_winner,k=5)
+
+table(perc_min_knn_pred,testing$pop_vote_winner)
+#mean(perc_min_knn_pred==training$pop_vote_winner)
+```
+
+
+
+### Summary of findings
+The results of these models indicate that the percentage of minorities in states are not a strong predictor for whether Hillary clinton won states, but it is a fairly good predictor within the states that Trump won during the election. In the states that Hillary won, the models only predicted correctly about 50% of the time, basically a coin flip. But in the states that Trump won, the models frequently predicted his victory with 80% accuracy or better. This indicates that the racial demographics of Trump supporters is much more concentrated and distinct than those of Hillary supporters among the different states.
+
+Out of the 4 different models which used percent minority as a predictor for whether Hillary or Trump won the state, k nearest neighbor was the most accurate.
+
+```{r eruptions}
+inputPanel(
+  selectInput("n_breaks", label = "Number of bins:",
+              choices = c(10, 20, 35, 50), selected = 20),
+  
+  sliderInput("bw_adjust", label = "Bandwidth adjustment:",
+              min = 0.2, max = 2, value = 1, step = 0.2)
+)
+
+renderPlot({
+  hist(faithful$eruptions, probability = TRUE, breaks = as.numeric(input$n_breaks),
+       xlab = "Duration (minutes)", main = "Geyser eruption duration")
+  
+  dens <- density(faithful$eruptions, adjust = input$bw_adjust)
+  lines(dens, col = "blue")
+})
+```
+
+##
+
+## **Third Party Voting**{.tabset .tabset-fade}
+
+### Overview
+
+The goal of this section is to try to understand how third party voting may have affected the election.
+
+In summary:
+
+- Percentage of third party votes in general is a poor predictor of who won the state
+
+- Percentage of votes for Gary Johnson is also a poor predictor of who won the state
+
+- More interestingly, percentage of votes for Jill Stein is a relatively good predictor of who won the state
+
+Setting up data set... 
+```{r}
+require(MASS)
+require(ISLR)
+require(tidyverse)
+library(dplyr)
+require(class)
+
+project<- "https://data.world/ncaldw01/election-results"
+df <- read.csv("https://query.data.world/s/9AePdX0-UXY6R90eqhjXNuTAA1imZ9", header=TRUE, stringsAsFactors=FALSE);
+#names(df)
+
+sdf = dplyr::select(df, rep16_frac, State, votes, votes16_trumpd, votes16_clintonh, votes16_johnsong, votes16_steinj, pop_vote_winner)
+sdf = sdf[complete.cases(sdf),] # Remove rows with NA
+sdf = dplyr::mutate(sdf,perc_third_party = (votes - votes16_trumpd - votes16_clintonh)/votes) # Add percent of third party votes
+```
+
+### LDA
+**Percent of Third Party Votes **
+```{r}
+# Partitions data set randomly into 30 states for a training set and 20 states for a testing set
+df_train <- subset(sdf, sdf$State <'N')
+df_test <- subset(sdf, !is.element(sdf$State, df_train$State))
+
+# Function that prints histogram, boxplit, confusion matrix, percent predicted correctly,
+# percent predicted incorrectly, and states predicted incorrectly
+# Takes lda fit as input
+lda_func <-function(lda.fit){
+  print(lda.fit)
+  
+  lda.pred = predict(lda.fit, df_test)
+  df.pred = data.frame(lda.pred)
+  df_test$lda_class = lda.pred$class
+  print(table(lda.pred$class,df_test$pop_vote_winner))
+  print(paste('Percent correct:', toString(mean(lda.pred$class==df_test$pop_vote_winner))))
+  print(paste('Percent incorrect:', toString(mean(lda.pred$class!=df_test$pop_vote_winner))))
+  print('States incorrectly predicted:')
+  print(subset(df_test, lda.pred$class!=df_test$pop_vote_winner)$State)
+  return(df.pred)
+  
+}
+
+
+# Looks at how third party votes affected the election
+df.pred <- lda_func(lda(pop_vote_winner~perc_third_party, data=df_train))
+df.pred
+renderPlot(ggplot(df.pred) + geom_histogram(mapping = aes(x=LD1)) + facet_wrap(~ class))
+```
+
+According to this analysis, percentage of third party votes is a very poor predictor of who won the state. 
+In fact if we ramdomly partition the data set into a training and testing set 5 times and redo LDA each time, this is the average percent correct:
+```{r}
+percent_correct_func <- function(fit,df_test){
+  fit.pred = data.frame(predict(fit, df_test))
+  return(mean(fit.pred$class==df_test$pop_vote_winner))
+}
+
+df_percent_correct = data.frame(avg_percent_correct = rep(0,4))
+percent_correct_redos=rep(0,5)
+for (i in 1:5){
+  # Redoes random partition
+  df_train_redo <- sdf[sample(nrow(sdf), 25),]
+  df_test_redo <- subset(sdf, !is.element(sdf$State, df_train_redo$State))
+  
+  # Uses LDA on new partition
+  fit=lda(pop_vote_winner~perc_third_party, data=df_train_redo)
+  percent_correct_redos[i] = percent_correct_func(fit, df_test_redo)
+}
+mean(percent_correct_redos)
+```
+Now let's look at percentages of votes for individual third party candidates...
+
+**Percentage of votes for Gary Johnson**
+```{r}
+sdf = dplyr::mutate(sdf,perc_johnson = (votes16_johnsong/votes))
+sdf = dplyr::mutate(sdf,perc_stein = (votes16_steinj/votes))
+df_train <- subset(sdf, sdf$State <'N')
+df_test <- subset(sdf, !is.element(sdf$State, df_train$State))
+lda_func(lda(pop_vote_winner~perc_johnson, data=df_train))
+renderPlot(ggplot(df.pred) + geom_histogram(mapping = aes(x=LD1)) + facet_wrap(~ class))
+```
+
+Again this is a very poor predictor...
+
+**Percentage of votes for Jill Stein**
+```{r}
+lda_func(lda(pop_vote_winner~perc_stein, data=df_train))
+renderPlot(ggplot(df.pred) + geom_histogram(mapping = aes(x=LD1)) + facet_wrap(~ class))
+```
+
+Percentage of votes for Jill Stein seems to be a much better predictor of who won the state.
+
+### QDA
+
+Again we can see that percentage of votes for Jill Stein is a much better predictor than percentage of votes for Gary Johnson or percentage of votes for a third party overall.
+
+```{r}
+df_train <- subset(sdf, sdf$State <'N')
+df_test <- subset(sdf, !is.element(sdf$State, df_train$State))
+
+qda_func <-function(qda.fit){
+  print(qda.fit)
+  
+  qda.pred = predict(qda.fit, df_test)
+  df.pred = data.frame(qda.pred)
+  print(table(qda.pred$class,df_test$pop_vote_winner))
+  print(paste('Percent correct:', toString(mean(qda.pred$class==df_test$pop_vote_winner))))
+  print(paste('Percent incorrect:', toString(mean(qda.pred$class!=df_test$pop_vote_winner))))
+  print('States predicted incorrectly:')
+  print(subset(df_test, qda.pred$class!=df_test$pop_vote_winner)$State)
+  
+}
+
+qda_func(qda(pop_vote_winner~perc_third_party, data=df_train))
+
+qda_func(qda(pop_vote_winner~perc_stein, data=df_train))
+qda_func(qda(pop_vote_winner~perc_johnson, data=df_train))
+```
+
+##
+
+
+## Predicition of Election through Uneployment and Uninsured Rates
+There are many different predictors that would help deterime whether a state would vote Hillary or Trump. However two factors that stand out are the unemployed and the uninsured. The unemployment rate and the uninsured rate are always central topics in elections, and this election was no different. Two major issues that were relevent to this election was wage inequality and universal health care, which are tide directly with unemployment and and uninsured. We wanted to see how the rates of these two factors effected which candidate won in each state. In the confusion matrix, 1 stands for Trump and 0 stands for Hillary. For the sake of this experiment 30 of the 50 states were used for training and the other 20 were used for testing
+
+The following graph shows the states Trump won and which states Hillary one, and where that state liew in terms of uninsured rates and unemployement rates
+
+```{r}
+require(MASS)
+require(ISLR)
+require(tidyverse)
+require(dplyr)
+require(class)
+require(ggplot2)
+
+project<- "https://data.world/ncaldw01/election-results"
+Edf <- read.csv("https://query.data.world/s/9AePdX0-UXY6R90eqhjXNuTAA1imZ9", header=TRUE, stringsAsFactors=FALSE);
+#names(Edf)
+
+Edf2= Edf %>% dplyr::select(State, pop_vote_winner, Uninsured, Unemployment) %>% dplyr::mutate(winner=ifelse(pop_vote_winner=="Trump", 1, 0))
+
+#Edf_train <- Edf2[sample(nrow(Edf2), 30),]
+#Edf_test <- subset(Edf2, !is.element(Edf2$State, Edf_train$State))
+Edf_test = Edf2[1:19,]
+Edf_train = Edf2[20:50,]
+
+renderPlot(ggplot(Edf_test, aes(x = Unemployment, y = Uninsured, colour = winner>0))+ geom_point() + scale_colour_manual(name = 'Candidate', labels = c("Hillary", "Trump"), values = setNames(c('red','blue'),c(T,F))))
+
+
+```
+
+The mean and confustion matrix for a logistic regression are as follow. The graphs below show which points were guessed correctly and incorrectly:
+
+```{r}
+#logistic Regression
+Elogreg2 = glm(winner ~ Uninsured + Unemployment, data = Edf_train, family = binomial)
+Elogreg2_pred = predict(Elogreg2, newdata = Edf_test, type = "response")
+Elogreg2_pred = ifelse(Elogreg2_pred>0.5,1,0) %>% data.frame()
+mean(Elogreg2_pred$.== Edf_test$winner)#0.75
+table(Elogreg2_pred$., Edf_test$winner)
+Elogreg_comb = cbind(Edf_test, Elogreg2_pred)%>% mutate(Correct = ifelse(winner == ., 0, 1))
+
+renderPlot(ggplot(Elogreg_comb, aes(x = Unemployment, y = Uninsured, colour = Correct>0))+ geom_point() + scale_colour_manual(name = 'Correct', labels = c("Correct", "Incorrect"), values = setNames(c('Orange','black'),c(T,F))))
+
+```
+
+The Logisitic Regression has an 89.5% accuracy, meaning that using this model predicted whether or not a state would vote Trump or Hillary with a very high degree of accuracy.
+
+
+Linear Discriminant Analysis is as follows
+
+```{r}
+
+#Linear Discriminant Analysis
+Elda1 = lda( winner ~ Uninsured + Unemployment, data = Edf_train)
+Elda.preds = predict(Elda1,Edf_test) %>% data.frame() 
+
+mean(Elda.preds$class==Edf_test$winner)
+table(Elda.preds$class, Edf_test$winner)
+Elda.preds = cbind(Edf_test, Elda.preds)%>% mutate(Correct = ifelse(winner == class, 0, 1))
+
+
+renderPlot(ggplot(Elda.preds, aes(x = Unemployment, y = Uninsured, colour = Correct>0))+ geom_point() + scale_colour_manual(name = 'Correct', labels = c("Correct", "Incorrect"), values = setNames(c('Orange','black'),c(T,F))))
+
+```
+
+The Linear Regression has an 89.5% accuracy. This model also has a very high predictor of which candidate would win the election.
+
+
+Quadratic Discriminant Analysis is as follows
+
+```{r}
+
+#Quadratic Discriminant Analysis
+Eqda1 = qda( winner ~ Uninsured + Unemployment, data = Edf_train)
+Eqda.preds = predict(Eqda1,Edf_test) %>% data.frame()
+mean(Eqda.preds$class==Edf_test$winner)
+table(Eqda.preds$class, Edf_test$winner)
+Eqda.preds = cbind(Edf_test, Eqda.preds)%>% mutate(Correct = ifelse(winner == class, 0, 1))
+
+
+renderPlot(ggplot(Eqda.preds, aes(x = Unemployment, y = Uninsured, colour = Correct>0))+ geom_point() + scale_colour_manual(name = 'Correct', labels = c("Correct", "Incorrect"), values = setNames(c('Orange','black'),c(T,F)))
+)
+
+```
+
+The Quadratic Discrimant Analysis has an 84.2% accuracy. This model did well but not as well as the Linear Regression or the Logistic Regression.
+
+
+KNN Linear Discriminant Analysis is as follows
+
+```{r}
+
+#K Nearest Neighbors Analysis
+attach(Edf2)
+vbind = cbind(Uninsured, Unemployment)
+train_comb = State>'Maine'
+knn.pred=knn(vbind[train_comb,],vbind[!train_comb,],pop_vote_winner[train_comb],k=5)
+knn.pred2 = knn.pred %>% data.frame
+table(knn.pred,pop_vote_winner[!train_comb])
+mean(knn.pred==pop_vote_winner[!train_comb])
+knn.pred2 = cbind(Edf_test, knn.pred2) %>% dplyr::mutate(result=ifelse(.=="Trump", 1, 0)) %>% dplyr::mutate(correct = ifelse(winner == result, 0, 1))
+
+
+renderPlot(ggplot(knn.pred2, aes(x = Unemployment, y = Uninsured, colour = correct>0))+ geom_point() + scale_colour_manual(name = 'Correct', labels = c("Correct", "Incorrect"), values = setNames(c('Orange','black'),c(T,F))))
+
+
+
+```
+
+The KNN alaysis with K = 5 has an accuracy of 78%. This model did not do a very good job of predicting whether a state would vote Hillary or Trump in comparison to the other models.
+
+Summary
+
+In Summary, for these particular variables, uninsured and unemployed the Linear Discriminant Analysis as well as the Logistic Regression predicted which candidiate would end up winning in each state. 
+
+
+## **White-Collar Workforce**{.tabset .tabset-fade}
+
+### Overview
+
+
+### Studying Correlations
+Before modeling, I added a column called **winner** to my data frame. States that went for Trump had value 1; states that went for Clinton had value 0. I then viewed correlations between **winner** and each other variable, hoping to discover variables that might make useful predictors.
+
+In the table below, I've illustrated one interesting discovery. White-collar professions are *negatively* correlated with **winner**, while blue-collar professions are *postiviely* correlated. That suggests that a higher proportion of white-collar jobs made a state more likely to go Clinton.
+
+```{r}
+# Importing dataset into RStudio
+project <- "https://data.world/ncaldw01/election-results"
+data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM ElectionsData2"),
+  dataset = project
+) %>%
+  dplyr::mutate(winner=ifelse(pop_vote_winner=="Trump",1,0))
+attach(data)
+
+# Illustrated correlations
+d <- data.frame("winner") %>%
+  dplyr::mutate(
+    mgmt_prof=cor(winner,management_professional_and_related_occupations),
+    service=cor(winner,service_occupations),
+    sales_office=cor(winner,sales_and_office_occupations),
+    agriculture=cor(winner,farming_fishing_and_forestry_occupations),
+    construction=cor(winner,construction_extraction_maintenance_and_repair_occupations),
+    transportation=cor(winner,production_transportation_and_material_moving_occupations)
+  )
+
+d
+```
+
+Having noticed that trend, I decided to use the three white-collar professions as predictors. 
+
+### Model Notes
+
+The following information might clarify some aspects of my models:
+* I use the letter 'n' in variable names to distinguish those vars from my partners'. e.g., instead of "knn.preds", I'll name the var "n.knn.preds". 
+* My training set contains 34 rows, and my testing set contains 16. This is because for KNN, the best test condition I could come up with was **state**>='O'. This resulted in a test set with 16 rows. For consistency, I used that same size across all four models.
+
+### Logistic Regression
+
+Logistic regression produced a model with a mean accuracy of 81% for testing data with 16 rows. (I used 16 rows to be consistent with my KNN test set. For KNN, the best test condition I could come up with was **state**<='O', which captured 16 rows. Therefore I use a 16-row test set for GLM, LDA, QDA, and KNN.)
+
+```{r}
+n.train = data[1:34,] # the 'n' is for "nathan"
+n.test = data[35:50,]
+
+n.glm.fit = glm(winner~
+                management_professional_and_related_occupations+
+                service_occupations+
+                sales_and_office_occupations,
+              data=n.train,
+              family=binomial)
+
+n.glm.preds = predict(n.glm.fit,newdata=n.test,type="response")
+n.glm.preds = ifelse(n.glm.preds>0.5,"Trump","Clinton") %>% data.frame()
+table(n.glm.preds$., n.test$pop_vote_winner)
+mean(n.glm.preds$.==n.test$pop_vote_winner) # 0.81
+```
+
+### LDA
+
+Linear discriminate analysis produced a model with a mean accuracy of 87.5% for testing data with 16 rows.
+
+```{r}
+n.lda.fit = lda(pop_vote_winner~
+                management_professional_and_related_occupations+
+                service_occupations+
+                sales_and_office_occupations,
+              data=n.train)
+
+n.lda.preds=predict(n.lda.fit,n.test) %>% data.frame()
+
+table(n.lda.preds$class, n.test$pop_vote_winner)
+mean(n.lda.preds$class==n.test$pop_vote_winner) # 0.875
+```
+
+### QDA
+
+Quadratic discriminate analysis produced a model with a mean accuracy of 81.25%.
+
+```{r}
+n.qda.fit = qda(pop_vote_winner~
+                management_professional_and_related_occupations+
+                service_occupations+
+                sales_and_office_occupations,
+              data=n.train)
+n.qda.preds=predict(n.qda.fit,n.test) %>% data.frame()
+table(n.qda.preds$class,n.test$pop_vote_winner)
+
+mean(n.qda.preds$class==n.test$pop_vote_winner) # 0.8125
+```
+
+### KNN
+
+K-nearest neighbor analysis (k=1) produced a model with a mean accuracy of 50%.
+
+```{r}
+n.Xlag=cbind(
+  management_professional_and_related_occupations,
+  service_occupations,
+  sales_and_office_occupations)
+train_cond=state<'O'  # -> training set of 34 rows, testing set of 16
+n.knn.preds=knn(
+  n.Xlag[train_cond,],
+  n.Xlag[!train_cond,],
+  pop_vote_winner[train_cond],
+  k=1)
+
+table(n.knn.preds,pop_vote_winner[!train_cond])
+mean(n.knn.pred==pop_vote_winner[!train_cond])
+```
+
+Why is this KNN fit so much worse than the others at predicting the election outcome?
+
+## Embedded Application
+
+It's also possible to embed an entire Shiny application within an R Markdown document using the `shinyAppDir` function. This example embeds a Shiny application located in another directory:
+
+```{r tabsets}
+shinyAppDir(
+  system.file("examples/06_tabsets", package = "shiny"),
+  options = list(
+    width = "100%", height = 900
+  )
+)
+```
+
+Note the use of the `height` parameter to determine how much vertical space the embedded application should occupy.
+
+You can also use the `shinyApp` function to define an application inline rather then in an external directory.
+
+In all of R code chunks above the `echo = FALSE` attribute is used. This is to prevent the R code within the chunk from rendering in the document alongside the Shiny components.
+
+## Inputs and Outputs 2
+
+```{r eruptions2}
+inputPanel(
+  selectInput("n_breaks2", label = "Number of bins:",
+              choices = c(10, 20, 35, 50), selected = 20),
+  
+  sliderInput("bw_adjust2", label = "Bandwidth adjustment:",
+              min = 0.2, max = 2, value = 1, step = 0.2)
+)
+
+renderPlot({
+  hist(faithful$eruptions, probability = TRUE, breaks = as.numeric(input$n_breaks2),
+       xlab = "Duration (minutes)", main = "Geyser eruption duration")
+  
+  dens <- density(faithful$eruptions, adjust = input$bw_adjust2)
+  lines(dens, col = "blue")
+})
+```
+
+

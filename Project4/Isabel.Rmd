@@ -1,0 +1,644 @@
+---
+title: "Isabel"
+runtime: shiny
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **Title I Eligibility by Location**{.tabset .tabset-fade}
+
+### Intro
+
+Setting up data...
+```{r}
+require(MASS)
+require(ISLR)
+require(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(maps)
+library(mapdata)
+
+project<- "https://data.world/wangweiyi722/f-17-eda-project-4"
+#df_orig <- read.csv("https://query.data.world/s/hvA1ht-J0O9mzt550iY43aXKb5fGDl", header=TRUE, stringsAsFactors=FALSE)
+
+df_orig <- read.csv("https://query.data.world/s/HA6-o2FHiIAxnVdNwfiukSb4hFek3R", header = TRUE, stringsAsFactors = FALSE)
+
+colnames(df_orig)[1] <- "State"
+colnames(df_orig)[2] <- "Location.City"
+colnames(df_orig)[4] <- "Full.Time.Teachers"
+colnames(df_orig)[8] <- "Total.Lunch"
+colnames(df_orig)[9] <- "Longitude"
+colnames(df_orig)[10] <- "Latitude"
+colnames(df_orig)[11] <-"Title.1.Eligible"
+
+df_map = subset(df_orig, (df_orig$Title.1.Eligible == "Yes")|(df_orig$Title.1.Eligible == "No"))
+df_map <- dplyr::mutate(df_map, factored_stats = factor(df_map$Title.1.Eligible, levels = c("Yes","No")))
+```
+
+**United States Mainland**
+```{r}
+states <- map_data("state")
+usa <- map_data("usa")
+us_base <- ggplot(data = states) + 
+  geom_polygon(aes(x = long, y = lat, group = group), color = "white") + 
+  coord_fixed(1.3)
+
+df_map_main_us <- filter(df_map, (df_map$State != "Bureau of Indian Education")&(df_map$State != "Northern Marianas")&(df_map$State != "Puerto Rico")&(df_map$State != "Alaska")&(df_map$State != "Hawaii"))
+
+df_map_main_us$State <- tolower(df_map_main_us$State)
+
+state_eligibilty_perc <-data.frame(state = unique(df_map_main_us$State), perc = rep(0,47))
+for (i in 1:47){
+  state <- state_eligibilty_perc[i,]$state
+  num_el <- nrow(subset(df_map_main_us, (df_map_main_us$State==state)&(df_map_main_us$Title.1.Eligible=="Yes")))
+  total <- nrow(subset(df_map_main_us, (df_map_main_us$State==state)))
+  percent <- num_el/total
+  state_eligibilty_perc[i,]$perc <- percent
+}
+state_eligibilty_perc <- mutate(state_eligibilty_perc, region = state)
+el_perc <- inner_join(state_eligibilty_perc, states, by = "region")
+
+ditch_the_axes <- theme(
+  axis.text = element_blank(),
+  axis.line = element_blank(),
+  axis.ticks = element_blank(),
+  panel.border = element_blank(),
+  panel.grid = element_blank(),
+  axis.title = element_blank()
+)
+
+ggplot(data = el_perc) + 
+  geom_polygon(aes(x = long, y = lat, group = group, fill=perc), color = "white") + 
+  ggtitle("Percentage of Title I Eligibility") +
+  theme_bw() +
+  ditch_the_axes +
+  scale_fill_gradientn(colours = rev(terrain.colors(7)),
+                       breaks = c(.14, .28, .42, .56, .70, .84, 1))
+
+el_perc[which.min(el_perc$perc),]$state
+el_perc[which.max(el_perc$perc),]$state
+```
+The map shows the percentage of schools that are Title I eligible for each state. Note that Nevada and Georgia have no data. According to the map, New York has the highest percentage of schools that are Title I eligible and Maryland has the lowest.
+
+**Texas**
+```{r}
+df_map_texas = subset(df_map, df_map$State == "Texas")
+
+states <- map_data("state")
+tx_df <- subset(states, region == "texas")
+tx_base <- ggplot(data = tx_df, mapping = aes(x = long, y = lat)) + 
+  coord_fixed(1.3) + 
+  geom_polygon(color = "black", fill = "black")
+
+df_map_texas_eligible <- dplyr:: filter(df_map_texas, df_map_texas$Title.1.Eligible=="Yes")
+df_map_texas_not_eligible <- subset(df_map_texas, df_map_texas$Title.1.Eligible=="No")
+
+tx_base +
+  geom_point(data = df_map_texas_eligible, mapping = aes(x=Longitude,y=Latitude,colour='Title I Eligible')) +
+  geom_point(data = df_map_texas_not_eligible,mapping = aes(x=Longitude,y=Latitude,colour='Not Title I Eligible')) + 
+  geom_point(mapping = aes(x=-97.743061,y=30.267153,colour = 'Major Cities'),size = 5,shape = 18)+
+  geom_point(mapping = aes(x=-96.796988,y=32.776664,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-95.369803,y=29.760427,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-98.493628,y=29.424122,colour = 'Major Cities'),size = 5,shape=18) + 
+  scale_color_brewer(palette="PRGn") +
+  ditch_the_axes
+```
+
+**California**
+```{r}
+df_map_ca = subset(df_map, df_map$State == "California")
+
+states <- map_data("state")
+ca_df <- subset(states, region == "california")
+ca_base <- ggplot(data = ca_df, mapping = aes(x = long, y = lat)) + 
+  coord_fixed(1.3) + 
+  geom_polygon(color = "black", fill = "black")
+
+df_map_ca_eligible <- dplyr:: filter(df_map_ca, df_map_ca$Title.1.Eligible=="Yes")
+df_map_ca_not_eligible <- subset(df_map_ca, df_map_ca$Title.1.Eligible=="No")
+
+ca_base +
+  geom_point(data = df_map_ca_eligible, mapping = aes(x=Longitude,y=Latitude,colour='Title I Eligible')) +
+  geom_point(data = df_map_ca_not_eligible,mapping = aes(x=Longitude,y=Latitude,colour='Not Title I Eligible')) + 
+  geom_point(mapping = aes(x=-122.419416,y=37.774929,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-117.161084,y=32.715738,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-118.243685,y=34.052234,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-121.886329,y=37.338208,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-121.494400,y=38.581572,colour = 'Major Cities'),size = 5,shape=18) +
+  ditch_the_axes +
+  scale_color_brewer(palette="PRGn")
+```
+
+**New York**
+```{r}
+df_map_ny = subset(df_map, df_map$State == "New York")
+
+ny_df <- subset(states, region == "new york")
+ny_base <- ggplot(data = ny_df, mapping = aes(x = long, y = lat)) + 
+  coord_fixed(1.3) + 
+  geom_polygon(color = "black", fill = "black")
+
+df_map_ny_eligible <- dplyr:: filter(df_map_ny, df_map_ny$Title.1.Eligible=="Yes")
+df_map_ny_not_eligible <- subset(df_map_ny, df_map_ny$Title.1.Eligible=="No")
+
+ny_base +
+  geom_point(data = df_map_ny_eligible, mapping = aes(x=Longitude,y=Latitude,colour='Title I Eligible')) +
+  geom_point(data = df_map_ny_not_eligible,mapping = aes(x=Longitude,y=Latitude,colour='Not Title I Eligible')) + 
+  geom_point(mapping = aes(x=-74.005973,y=40.712775,colour = 'Major Cities'),size = 5,shape=18) +
+  ditch_the_axes +
+  scale_color_brewer(palette="PRGn")
+```
+
+**Looking at all the plots for the charts, it's clear that Title I eligilble schools tend to be centered around big cities**
+This should make intuitive sense because high paying jobs tend to be located in cities, rather than in rural areas.
+
+### Austin
+About 62 % of Austin schools are T1 eligible, so if we create a model that predicts all schools to be Title I eligible, we would have an error rate of about 38%. We will use this as our baseline.
+
+**Linear Basis SVM**
+
+Using a linear basis SVM, we can attempt to predict Title I eligibility by location in Austin.
+Using 10-fold Cross Validation, we tune for the optimal parameters then run a SVM.
+
+```{r}
+library(e1071)
+set.seed(11)
+df_svm = filter(df_orig, (Title.1.Eligible == "Yes")|(Title.1.Eligible == "No")) %>%
+         filter(Location.City == 'AUSTIN' & Longitude < -95 & Latitude < 35) %>%
+         mutate(Longitude_Scaled = Longitude/3)
+df_svm$Latitude <- as.numeric(df_svm$Latitude)
+df_svm$Longitude <- as.numeric(df_svm$Longitude)
+df_svm$Title.1.Eligible <- as.factor(df_svm$Title.1.Eligible)
+
+ggplot(data = df_svm, mapping = aes(x=Longitude_Scaled,y=Latitude,colour=Title.1.Eligible)) + geom_point()
+
+# Linear SVM
+tuned = tune.svm(Title.1.Eligible~Longitude_Scaled+Latitude, data = df_svm, 
+                 kernel = "linear",
+                 cost = 1:10,
+                 tunecontrol=tune.control(cross=10))
+
+best_cost <- tuned$best.model$cost
+
+svmfit=svm(Title.1.Eligible~Longitude_Scaled+Latitude,data=df_svm,type="C",kernel="linear",cost=best_cost)
+print(svmfit)
+
+make.grid=function(x,n=100){
+  grange=apply(x,2,range)
+  x1=seq(-32.67,-32.52,length=n)
+  x2=seq(30.12,30.55,length=n)
+  expand.grid(X1=x1,X2=x2)
+}
+
+x= cbind(df_svm$Longitude_Scaled,df_svm$Latitude)
+y =df_svm$Title.1.Eligible
+col_func <- function(x){  ifelse(x=="Yes","blue","red") }
+col <-col_func(y)
+xgrid=make.grid(x)
+colnames(xgrid)[1] = "Longitude_Scaled"
+colnames(xgrid)[2] = "Latitude"
+ygrid=predict(svmfit,xgrid)
+plot(xgrid,col=c("red","blue")[as.numeric(ygrid)],pch=20,cex=.2)
+points(x,col=col,pch=19)
+
+tuned$best.performance
+```
+
+Looking at the plot, we can see that the model picks up the fact the schools in East Austin are more likely to be Title 1 eligible. 
+
+**Radial Basis SVM**
+
+Now we try Radial Basis SVM. Again we perform 10-fold CV to tune the parameters.
+
+```{r}
+library(ggmap)
+tuned = tune.svm(Title.1.Eligible~Longitude_Scaled+Latitude, data = df_svm, 
+                 cost = 1:10, 
+                 gamma = 1:10,
+                 kernel = "radial",
+                 tunecontrol=tune.control(cross=10))
+best_gamma <- tuned$best.model$gamma
+best_cost <- tuned$best.model$cost
+
+svmfit=svm(Title.1.Eligible~Longitude_Scaled+Latitude,data=df_svm,type="C",kernel="radial",cost=best_cost,gamma=best_gamma)
+
+print(svmfit)
+
+make.grid=function(x,n=100){
+  grange=apply(x,2,range)
+  x1=seq(-32.67,-32.52,length=n)
+  x2=seq(30.12,30.55,length=n)
+  expand.grid(X1=x1,X2=x2)
+}
+
+x= cbind(df_svm$Longitude_Scaled,df_svm$Latitude)
+y =df_svm$Title.1.Eligible
+col_func <- function(x){  ifelse(x=="Yes","blue","red") }
+col <-col_func(y)
+xgrid=make.grid(x)
+colnames(xgrid)[1] = "Longitude_Scaled"
+colnames(xgrid)[2] = "Latitude"
+ygrid=predict(svmfit,xgrid)
+plot(xgrid,col=c("red","blue")[as.numeric(ygrid)],pch=20,cex=.2)
+points(x,col=col,pch=19)
+
+tuned$best.performance
+```
+
+Looking at the error rates, it's clear that *radial basis SVM performs better*. In fact, we can lay the points over a map to see more specifically where the T1 schools lie.
+
+```{r}
+lat <- as.numeric(df_svm$Latitude)
+lon <- as.numeric(df_svm$Longitude_Scaled*3)
+T1 <- as.factor(df_svm$Title.1.Eligible)
+df_austin <- data.frame(lat,lon,T1)
+
+austin <- get_googlemap(center = c(lon = -97.743061, lat = 30.267153), maptype = "roadmap",zoom = 11)
+
+df_austin$Longitude_Scaled <- df_svm$Longitude_Scaled
+df_austin$Latitude <- df_svm$Latitude
+test <- df_austin
+test$pred <- predict(svmfit, df_austin)
+
+ggmap(austin) + 
+  geom_point(data = test, mapping = aes(x=lon,y=lat,colour = pred, shape = T1),size = 3) +
+  ditch_the_axes +
+  labs(title = "Radial Basis SVM Predictions")
+```
+
+**Perc. of White Students vs Perc. of Free/Reduced Lunch**
+
+We will be looking at how the percentage of white students vs. the percentage of student eligible for free/reduced lunch in Austin. First let's look at the distribution:
+
+```{r}
+set.seed(11)
+df4 <- filter(df_orig, Title.1.Eligible == "Yes"|Title.1.Eligible == "No") %>%
+                     filter(Location.City=="AUSTIN") %>%
+                     mutate(stratio = Full.Time.Teachers / member, 
+                            perc_white = white / member, 
+                            perc_lunch = Total.Lunch / member)                      
+                    
+ggplot(data = df4, mapping = aes(x=perc_white,y=perc_lunch,colour=Title.1.Eligible)) + 
+  geom_point() + xlab("Percentage of White Students") + ylab("Percentage of Students Qualified for Free/Reduced Lunch") +
+  ggtitle("Schools in Austin")
+```
+
+It looks like there is a cluster in the bottom right and the top left.
+
+**SVM**
+First let's try a supervised approach, testing for Title I eligibility.
+
+```{r}
+# SVM
+y<-df4$Title.1.Eligible <- as.factor(df4$Title.1.Eligible)
+x<- cbind(df4$perc_white,df4$perc_lunch)
+tuned = tune.svm(y~x, data = df4, 
+                 cost = 1:10, 
+                 gamma = 1:10,
+                 kernel = "radial",
+                 tunecontrol=tune.control(cross=10))
+best_gamma <- tuned$best.model$gamma
+best_cost <- tuned$best.model$cost
+
+svmfit=svm(Title.1.Eligible~perc_white+perc_lunch,data=df4,type="C",kernel="radial",cost=best_cost,gamma=best_gamma)
+
+print(svmfit)
+
+make.grid=function(x,n=100){
+  grange=apply(x,2,range)
+  x1=seq(0,1,length=n)
+  x2=seq(0,1,length=n)
+  expand.grid(X1=x1,X2=x2)
+}
+
+col_func <- function(x){  ifelse(x=="Yes","blue","red") }
+col <-col_func(y)
+xgrid=make.grid(x)
+colnames(xgrid)[1] = "perc_white"
+colnames(xgrid)[2] = "perc_lunch"
+ygrid=predict(svmfit,xgrid)
+plot(xgrid,col=c("red","blue")[as.numeric(ygrid)],
+     pch=20,cex=.2,
+     xlab = "Percentage of White Students", 
+     ylab = "Percentage of Students Qualified for Free/Reduced Lunch",
+     main = "Radial Basis SVM")
+points(x,col=col,pch=19)
+tuned$best.performance
+```
+
+**K-means Clustering**
+Now let's look at an unsupervised approach.
+```{r}
+col_func <- function(x){  ifelse(x=="Yes","blue","red") }
+x <- cbind(df4$perc_white,df4$perc_lunch)
+col <- col_func(df4$Title.1.Eligible)
+
+km.out=kmeans(x,2)
+km.out
+km.out$cluster
+
+cluster_col_func <- function(x){ifelse(x=="1",'orange','green')}
+cluster_col <- cluster_col_func(km.out$cluster)
+clust_pred_function <- function(x){ifelse(x=="2","No","Yes")}
+clust_pred <- clust_pred_function(km.out$cluster)
+
+plot(x,col=cluster_col,cex=2,pch=1,lwd=2, 
+     xlab = "Percentage of White Students", 
+     ylab = "Percentage of Students Qualified for Free/Reduced Lunch",
+     main = "Clustering")
+points(x,col=col,pch=19)
+text(.95,.95,labels = paste("Error =",toString(mean(clust_pred != df4$Title.1.Eligible))))
+
+table(clust_pred, df4$Title.1.Eligible)
+mean(clust_pred != df4$Title.1.Eligible)
+```
+
+Although this does not perform as well as the supervised methods, it is still interesting that the clustering still performs significantly better than our baseline. This means that if we were not given the classifications for the schools, we could still build a fairly decent model using unsupervised learning.
+
+**Hierarchical Clustering**
+
+Finally let's try Hierarchical Clustering
+
+```{r}
+df6 <- filter(df_orig, Title.1.Eligible == "Yes"|Title.1.Eligible == "No") %>%
+     filter(Location.City=="AUSTIN") %>%
+     mutate(stratio = Full.Time.Teachers / member, 
+            perc_white = white / member, 
+            perc_lunch = Total.Lunch / member)
+x <- cbind(df6$perc_white,df6$perc_lunch)
+y <- df6$Title.1.Eligible
+
+ggplot(data = df6, mapping = aes(x=perc_white,y=perc_lunch,colour=Title.1.Eligible)) + 
+  geom_point() + xlab("Percentage of White Students") + ylab("Percentage of Students Qualified for Free/Reduced Lunch") +
+  ggtitle("Schools in Austin")
+
+hc.complete=hclust(dist(x),method="complete")
+plot(hc.complete)
+
+hc.cut=cutree(hc.complete,2)
+hc.cut
+
+cluster_col_func <- function(x){ifelse(x=="1",'orange','green')}
+cluster_col <- cluster_col_func(hc.cut)
+col_func <- function(x){ifelse(x=="Yes","blue","red")}
+col <- col_func(y)
+
+clust_pred_function <- function(x){ifelse(x==2,"No","Yes")}
+clust_pred <- clust_pred_function(hc.cut)
+
+plot(x,col=cluster_col,cex=2,pch=1,lwd=2, 
+             xlab = "Percentage of White Students", 
+             ylab = "Percentage of Students Qualified for Free/Reduced Lunch",
+             main = "Clustering")
+points(x=x[,1],y=x[,2],col=col,pch=19)
+text(.95,.95,labels = paste("Error =",toString(mean(clust_pred != df6$Title.1.Eligible))))
+table(clust_pred, df6$Title.1.Eligible)
+mean(clust_pred != df6$Title.1.Eligible)
+```
+
+We can see that Hierarchical Clustering performs better than K-means.
+
+### San Antonio
+
+First let's take a look a the distribution of schools in San Antonio.
+
+```{r}
+df_svm = filter(df_orig, (Title.1.Eligible == "Yes")|(Title.1.Eligible == "No")) %>%
+  filter(Location.City == 'SAN ANTONIO')
+lat <- as.numeric(df_svm$Latitude)
+lon <- as.numeric(df_svm$Longitude)
+T1 <- as.factor(df_svm$Title.1.Eligible)
+df_sa <- data.frame(lat,lon,T1)
+
+
+
+sa <- get_googlemap(center= c(lon = -98.493628, lat = 29.424122), maptype = "roadmap",zoom = 11)
+ggmap(sa) + 
+  geom_point(data = df_sa, mapping = aes(x=lon,y=lat,colour = T1),size = 3) +
+  ditch_the_axes
+```
+
+Looking at the map, it looks like schools not Title I eligible are centered towards North San Antonio.
+
+**Radial Basis SVM**
+
+```{r}
+tuned = tune.svm(T1~., data = df_sa, 
+                 cost = 1:10, 
+                 gamma = 1:10,
+                 kernel = "radial",
+                 tunecontrol=tune.control(cross=10))
+best_gamma <- tuned$best.model$gamma
+best_cost <- tuned$best.model$cost
+
+
+svmfit=svm(T1~.,data=df_sa,type="C",kernel="radial",cost=best_cost,gamma=best_gamma)
+print(svmfit)
+
+test <- df_sa
+test$pred <- predict(svmfit, df_sa)
+
+ggmap(sa) + 
+  geom_point(data = test, mapping = aes(x=lon,y=lat,colour = pred, shape = T1),size = 3) +
+  ditch_the_axes +
+  labs(title = "Radial Basis SVM Predictions",
+       caption = paste("Misclassification error = ", toString(mean(test$pred!=test$T1))))
+
+mean(test$pred!=test$T1)
+table(test$pred,test$T1)
+```
+
+The SVM seems to pick up on the fact the schools in the North are less likely to be Title I eligible, but with a bias towards classifying the schools as eligible. 
+
+### Los Angeles
+
+Finally let's look at LA
+
+```{r}
+df_svm = filter(df_orig, (Title.1.Eligible == "Yes")|(Title.1.Eligible == "No")) %>%
+  filter(Location.City == "LOS ANGELES")
+lat <- as.numeric(df_svm$Latitude)
+lon <- as.numeric(df_svm$Longitude)
+T1 <- as.factor(df_svm$Title.1.Eligible)
+df_la <- data.frame(lat,lon,T1)
+
+
+la <- get_googlemap(center= c(lon = -118.293685, lat = 34.052234), maptype = "roadmap",zoom = 11)
+ggmap(la) + 
+  geom_point(data = df_la, mapping = aes(x=lon,y=lat,colour=T1)) +
+  ditch_the_axes + ggtitle("Schools of Los Angeles")
+```
+
+Los Angeles does not have many T1 eligible schools, which makes sense given the high cost of living. There is however a small cluster of T1 eligible schools in South West LA.
+
+**Radial Basis SVM**
+
+```{r}
+tuned = tune.svm(T1~., data = df_la, 
+                 cost = 1:10, 
+                 gamma = 1:10,
+                 kernel = "radial",
+                 tunecontrol=tune.control(cross=10))
+best_gamma <- tuned$best.model$gamma
+best_cost <- tuned$best.model$cost
+
+
+svmfit=svm(T1~.,data=df_la,type="C",kernel="radial",cost=best_cost,gamma=best_gamma)
+print(svmfit)
+
+test <- df_la
+test$pred <- predict(svmfit, df_la)
+
+ggmap(la) + 
+  geom_point(data = test, mapping = aes(x=lon,y=lat,colour = pred, shape = T1),size=2) +
+  ditch_the_axes +
+  labs(title = "Radial Basis SVM Predictions",
+       caption = paste("Misclassification error = ", toString(mean(test$pred!=test$T1))))
+
+mean(test$pred!=test$T1)
+table(test$pred,test$T1)
+```
+
+The SVM seems to pick up on the small cluster in South West LA but does not do as well with the Title I eligble schools scattered throughout LA.
+
+### Texas
+
+Now let's look at the Texas.
+
+```{r}
+df_svm = filter(df_orig, (Title.1.Eligible == "Yes")|(Title.1.Eligible == "No")) %>%
+  filter(State == 'Texas') %>%
+  mutate(Longitude_Scaled = Longitude/3)
+df_svm$Latitude <- as.numeric(df_svm$Latitude)
+df_svm$Longitude <- as.numeric(df_svm$Longitude)
+df_svm$Title.1.Eligible <- as.factor(df_svm$Title.1.Eligible)
+ggplot(data = df_svm, mapping = aes(x=Longitude_Scaled,y=Latitude,colour=Title.1.Eligible)) + geom_point()
+```
+
+Tuning the parameters with 10-fold CV is very slow but when I ran it, it returned cost = 5 and gamma = 10. I've included the code but commented it out in case you have a free 30 minutes and want to try it out for yourself.
+
+```{r}
+# Tuning is super slow so just trust me that it returned cost=5 and gamma=10
+#tuned = tune.svm(Title.1.Eligible~Longitude_Scaled+Latitude, data = df_svm, 
+#                 cost = 2^2:10, 
+#                 gamma = 2^2:10,
+#                 kernel = "radial",
+#                 tunecontrol=tune.control(cross=10))
+#best_gamma <- tuned$best.model$gamma
+#best_cost <- tuned$best.model$cost
+
+#svmfit=svm(Title.1.Eligible~Longitude_Scaled+Latitude,data=df_svm,type="C",kernel="radial",cost=best_cost,gamma=best_gamma)
+svmfit=svm(Title.1.Eligible~Longitude_Scaled+Latitude,data=df_svm,type="C",kernel="radial",cost=5,gamma=10)
+print(svmfit)
+```
+
+The SVM  seems to pick that schools not eligible for Title I funding tend to be centered around large cities, but does not do as well within those cities, which makes sense.
+
+### US
+
+For now we will only look at elementary schools. About 81% of elementary schools in the US are Title I eligible, so we will use this as our baseline.
+
+```{r}
+df_elem <- filter(df_orig, df_orig$level == 'Primary School') %>% filter(Title.1.Eligible == "Yes"|Title.1.Eligible == "No")
+nrow(subset(df_elem, df_elem$Title.1.Eligible == 'Yes'))/nrow(df_elem)
+df_elem <- dplyr::select(df_elem, "State", "Location.City",
+                    "Longitude", "Latitude", "Title.1.Eligible", "Total.Lunch", 
+                   "Full.Time.Teachers", "member", "am", "asian", "hisp", "black", "white", "pacific", "tr", "toteth")
+df_elem_test_vars <- dplyr::select(df_elem, "Title.1.Eligible", "Total.Lunch", 
+                            "Full.Time.Teachers", "am", "asian", "hisp", "black", "white", "pacific", "tr", "toteth")
+nrow(subset(df_elem, df_elem$Title.1.Eligible=="Yes"))/nrow(df_elem) # Base line = 81 %
+```
+
+**Decision Tree**
+
+First we run a basic decision tree.
+```{r}
+require(tree)
+dim(df_elem_test_vars)
+df_elem_test_vars$Title.1.Eligible <- as.factor(df_elem_test_vars$Title.1.Eligible)
+elem_tree <- tree(Title.1.Eligible~., data = df_elem_test_vars)
+plot(elem_tree)
+text(elem_tree,pretty=0)
+elem_tree
+```
+
+The decision tree tags all the schools as eligible. Evidently there is too much noise in the data.
+
+**Random Forest**
+
+Let's use a random forest to determine the most important predictors.
+
+```{r}
+require(randomForest) 
+set.seed(11)
+train_vars=sample(1:nrow(df_elem_test_vars),36474) # 70% of data
+rf.elem = randomForest(Title.1.Eligible ~ . ,data=df_elem_test_vars, subset=train_vars)
+rf.elem
+varImpPlot(rf.elem,  
+           sort = T,
+           main="Variable Importance",
+           pch = 19,
+           col = 'blue')
+```
+
+According to the plot, total number of students that are eligible for free/reduced lunch, number of full time teachers, number of white students, and number of minority students are the most important predictors for Title I eligibility. Let's take the 4 most important.
+
+Now let's test for the optimal number of predictors sampled for splitting at each node in a random forest.
+
+```{r}
+df_elem1 <- dplyr::select(df_elem, Title.1.Eligible, Total.Lunch,
+                   Full.Time.Teachers, toteth, white)
+df_elem1$Title.1.Eligible <- as.factor(df_elem1$Title.1.Eligible)
+dim(df_elem1)
+train=sample(1:nrow(df_elem1),36474) # 70% of data
+# Testing number of predictors sampled for spliting at each node
+#test.err=double(4)
+#for(mtry in 1:4){
+#  fit=randomForest(Title.1.Eligible~.,data=df_elem1,subset=train,mtry=mtry)
+#  pred=predict(fit,df_elem1[-train,])
+#  test.err[mtry]=mean(pred!=df_elem1[-train,]$Title.1.Eligible)
+#  cat(mtry," ")
+#}
+test.err <- c(0.1475085, 0.1497473, 0.1506429, 0.1511546)
+matplot(1:4,test.err,pch=19,col="blue",type="b",ylab="Misclassification Error",xlab="mtry")
+```
+
+Looking at the graph, the optimal mtry is 1. Let's try it out:
+
+```{r}
+min_mtry<- which.min(test.err)
+fit=randomForest(Title.1.Eligible~.,data=df_elem1,subset=train,mtry=min_mtry)
+fit
+pred=predict(fit,df_elem1[-train,])
+mean(pred!=df_elem1[-train,]$Title.1.Eligible)
+mean(pred==df_elem1[-train,]$Title.1.Eligible)
+table(pred, df_elem1[-train,]$Title.1.Eligible)
+```
+
+This produces a slightly higher sccuracy rate than the baseline. Now let's test for the optimal number of trees:
+
+```{r}
+#tree.error = double(10)
+numTrees <- 1:10*20
+#for(i in 1:10){
+#  fit=randomForest(Title.1.Eligible~.,data=df_elem1,subset=train,ntree=numTrees[i],mtry = min_mtry)
+#  pred=predict(fit,df_elem1[-train,])
+#  tree.error[i]=mean(pred!=df_elem1[-train,]$Title.1.Eligible)
+#  cat(numTrees[i]," ")
+#}
+tree.error <- c( 0.1538412, 0.1521141, 0.1506429, 0.1498113, 0.1494915, 0.1482121, 0.1466769, 0.1478283, 0.1471886, 0.1484040)
+matplot(numTrees,tree.error,pch=19,col="blue",type="b",ylab="Misclassification Error",xlab = "Number of Trees")
+min_tree <- numTrees[which.min(tree.error)]
+fit=randomForest(Title.1.Eligible~.,data=df_elem1,subset=train,ntree=numTrees[which.min(tree.error)],mtry=min_mtry)
+fit
+pred=predict(fit,df_elem1[-train,])
+mean(pred!=df_elem1[-train,]$Title.1.Eligible)
+mean(pred==df_elem1[-train,]$Title.1.Eligible)
+table(pred, df_elem1[-train,]$Title.1.Eligible)
+```
+
+This does not significantly improve the accuracy rate.

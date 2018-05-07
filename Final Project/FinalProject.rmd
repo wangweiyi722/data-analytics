@@ -1,0 +1,1396 @@
+---
+title: "FinalProject"
+author: "Weiyi, Isabel, Edward, Nathan"
+date: "November 26, 2017"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+runtime: shiny
+resource_files:
+- .Renviron
+
+---
+
+```{r setup, include=FALSE}
+require(tidyverse)
+require(reshape2)
+require(data.world)
+require(dplyr)
+require(MASS)
+require(ISLR)
+require(tidyverse)
+require(data.world)
+require(ggplot2)
+require(glmnet)
+require(leaps)
+require(boot)
+knitr::opts_chunk$set(echo = TRUE)
+library(class)
+require(knitr)
+require(tree)
+
+```
+  
+## **R Session Info**  
+
+```{r}
+sessionInfo()
+```
+
+## **Github Link** 
+https://github.com/isabelcachola/CS329
+
+## **Data.world Link**
+https://data.world/wangweiyi722/f-17-eda-project-5/
+
+## Disclaimer
+Not all data.world insights are fully represented in this RMD document. Please view data.world for deeper analysis
+
+##Reading Data
+```{r}
+project<- "https://data.world/wangweiyi722/f-17-eda-project-5"
+data.world::set_config(cfg_env("DW_API"))
+# data will take a while to read
+fy13_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy13_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy13_school_budget_data  <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy13_school_budget_data"),
+  dataset = project
+)
+fy14_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy14_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy15_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy15_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy15_data_for_tableau  <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy15_data_for_tableau"),
+  dataset = project
+)
+fy16_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy16_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy16_school_budget_data  <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy16_school_budget_data"),
+  dataset = project
+)
+initial_allocation_rollup_map <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_allocation_rollup_map"),
+  dataset = project
+)
+initial_allocations_2_16_16 <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_allocations_2_16_16"),
+  dataset = project
+)
+initial_at_risk_allocations <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_at_risk_allocations"),
+  dataset = project
+)
+initial_budget_allocations <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_budget_allocations"),
+  dataset = project
+)
+fy_15_budget_by_line_item <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy15_data_for_tableau"),
+  dataset = project
+)
+public_schools_3 <- data.world::query(
+  data.world::qry_sql("SELECT * FROM public_schools_3"),
+  dataset = project
+)
+wards_info <- data.world::query(
+  data.world::qry_sql("SELECT * FROM ward_from_2012_2"),
+  dataset = project
+)
+enrollment_changes <- data.world::query(
+  data.world::qry_sql("SELECT * FROM enrollment_changes_2"),
+  dataset = project
+)
+```
+
+## *Budget and Enrollment Data* {.tabset .tabset-fade}
+
+### Basic Funding Distribution
+
+This is a comparison of school budget data from 2013 and 2016. 
+
+```{r}
+fy13=dplyr::full_join(fy13_budgeted_student_enrollment_data,fy13_school_budget_data,by=c("school_code"="code","school_name"="school","fiscal_year","school_type","ward"))
+fy14=fy14_budgeted_student_enrollment_data
+fy15=fy15_budgeted_student_enrollment_data
+fy16=dplyr::full_join(fy16_budgeted_student_enrollment_data,fy16_school_budget_data,by=c("school_name","school_type","ward"))
+
+fy13_aggregate_budget=aggregate(fy13$amount,by=list(Category=fy13$budget_category),FUN=sum)
+fy16_aggregate_budget=aggregate(fy16$amount,by=list(Category=fy16$budget_allocation_category),FUN=sum)
+barplot(fy13_aggregate_budget$x,names.arg=fy13_aggregate_budget$Category,cex.names=.7,las=2,main="2013 Funding Distribution",ylab="Amount (USD)",xlab="Funding Category",ylim=c(0,900000000))
+barplot(fy16_aggregate_budget$x,names.arg=fy16_aggregate_budget$Category,cex.names=.7,las=2,main="2016 Funding Distribution",ylab="Amount (USD)",xlab="Funding Category",ylim=c(0,900000000))
+
+```
+
+Note that there is an overall decrease in the amount of funding from 2013 to 2016.
+
+### Basic Enrollment Visualizations
+
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/ff7cd745-7659-4bf3-834b-405deeb0c946
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/2fedf8fa-4979-4ec9-8d17-0362f73a5308
+
+```{r}
+#Creating the enrollment data frame over the years 2013 to 2016
+fy13_enrollment_aggregate=aggregate(cbind(fy13_budgeted_student_enrollment_data$total_projected_enrollment,fy13_budgeted_student_enrollment_data$early_childhood_enrollment,fy13_budgeted_student_enrollment_data$english_language_learners,fy13_budgeted_student_enrollment_data$special_education),by=list(Category=fy13_budgeted_student_enrollment_data$school_type),FUN=sum)
+fy13_enrollment_aggregate$Year="2013"
+
+fy14_enrollment_aggregate=aggregate(cbind(fy14_budgeted_student_enrollment_data$total_projected_enrollment,fy14_budgeted_student_enrollment_data$early_childhood_enrollment,fy14_budgeted_student_enrollment_data$english_language_learners,fy14_budgeted_student_enrollment_data$special_education),by=list(Category=fy14_budgeted_student_enrollment_data$school_type),FUN=sum)
+fy14_enrollment_aggregate$Year="2014"
+
+fy15_enrollment_aggregate=aggregate(cbind(fy15_budgeted_student_enrollment_data$total_projected_enrollment,fy15_budgeted_student_enrollment_data$early_childhood_enrollment,fy15_budgeted_student_enrollment_data$english_language_learners,fy15_budgeted_student_enrollment_data$special_education),by=list(Category=fy15_budgeted_student_enrollment_data$school_type),FUN=sum)
+fy15_enrollment_aggregate$Year="2015"
+
+fy16_enrollment_aggregate=aggregate(cbind(fy16_budgeted_student_enrollment_data$total_projected_enrollment,fy16_budgeted_student_enrollment_data$early_childhood,fy16_budgeted_student_enrollment_data$english_language_learners,fy16_budgeted_student_enrollment_data$special_education),by=list(Category=fy16_budgeted_student_enrollment_data$school_type),FUN=sum)
+fy16_enrollment_aggregate$Year="2016"
+fy16_enrollment_aggregate[is.na(fy16_enrollment_aggregate)]=0
+fy16_total_row = c("DCPS",apply(fy16_enrollment_aggregate[c(2,3,4,5)],2,FUN=sum),"2016")
+fy16_total_row = data.frame(t(data.frame(fy16_total_row)))
+colnames(fy16_total_row) = c("Category","V1","V2","V3","V4","Year")
+fy16_total_row[,2:5] = c(49236,6013,48,2415)
+fy16_enrollment_aggregate=rbind(fy16_enrollment_aggregate,fy16_total_row)
+
+
+all_years_enrollment = rbind(fy13_enrollment_aggregate,fy14_enrollment_aggregate,fy15_enrollment_aggregate,fy16_enrollment_aggregate)
+
+#Replace all the na with 0
+all_years_enrollment[is.na(all_years_enrollment)]=0
+colnames(all_years_enrollment)=c("category","total_enrollment","early_childhood_enrollment","english_language_learners","special_education","year")
+
+ggplot(all_years_enrollment, aes(year, total_enrollment, fill = category)) + 
+  geom_bar(stat="identity", position = "dodge")
+```
+
+It appears that there is an upwards trend for enrollment from 2013 to 2016.
+
+## *Budget Change by School* {.tabset .tabset-fade}
+
+### Direct Certifications Model
+
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/8d29093c-3940-4f40-95ad-7c20fe7e6177
+
+An important part of planning for an academic year is determining how much money the higher ups might allocate for your school to use. Being able to predict the change in budget from previous years could be very useful. The distribution of the change in budget among all 100+ schools in the DC area is displayed in the box plot below.
+
+```{r}
+#Remove the rows with total budget category from each data frame first to avoid double counting
+fy13_clean = fy13[fy13$budget_category!="Total",]
+fy16_clean = fy16[fy16$budget_allocation_category!="Total",]
+
+fy13_school_aggregate_budget=aggregate(fy13_clean$amount,by=list(Category=fy13_clean$school_name),FUN=sum)
+fy16_school_aggregate_budget=aggregate(fy16_clean$amount,by=list(Category=fy16_clean$school_name),FUN=sum)
+fy13_school_aggregate_budget[7,1]="Benjamin Banneker"
+fy16_school_aggregate_budget$Category = gsub(" HS$","",fy16_school_aggregate_budget$Category)
+fy16_school_aggregate_budget$Category = gsub(" ES$","",fy16_school_aggregate_budget$Category)
+fy16_school_aggregate_budget$Category = gsub(" MS$","",fy16_school_aggregate_budget$Category)
+fy16_school_aggregate_budget$Category = gsub(" EC$","",fy16_school_aggregate_budget$Category)
+fy16_school_aggregate_budget=fy16_school_aggregate_budget[complete.cases(fy16_school_aggregate_budget),]
+fy13_16=merge(fy13_school_aggregate_budget,fy16_school_aggregate_budget,by="Category")
+colnames(fy13_16)=c("School","Budget13","Budget16")
+fy13_16$change = as.integer(fy13_16$Budget16-fy13_16$Budget13)
+fy13_16=fy13_16[complete.cases(fy13_16),]
+ggplot(fy13_16,aes(x="",y=as.integer(change)))+geom_boxplot()
+
+```
+
+The majority of schools experienced an increase in budget from 2013 to 2016 while others had a decrease in budget, so what variables might be effective predictors for how the budget changes from year to year. I want to find the best subset of predictors for change in budget. The best predictors may show what the school district officials are prioritizing and deprioritizing.
+
+```{r}
+fy16_enrollment_clean = fy16_budgeted_student_enrollment_data
+fy16_enrollment_clean$school_name = gsub(" HS$","",fy16_enrollment_clean$school_name)
+fy16_enrollment_clean$school_name = gsub(" ES$","",fy16_enrollment_clean$school_name)
+fy16_enrollment_clean$school_name = gsub(" MS$","",fy16_enrollment_clean$school_name)
+fy16_enrollment_clean$school_name = gsub(" EC$","",fy16_enrollment_clean$school_name)
+fy16_enrollment_clean[is.na(fy16_enrollment_clean)]=0
+fy13_16_enrollment = merge(fy13_16,fy16_enrollment_clean,by.x=c("School"),by.y=c("school_name"))
+```
+
+Now I apply the subset selection
+
+```{r}
+
+#Change the budget change column to a percent change.
+fy13_16_enrollment$change=fy13_16_enrollment$change/fy13_16_enrollment$Budget13
+enroll_regfit=regsubsets(change~.,data=fy13_16_enrollment[,c(-1,-2,-3,-5,-6,-7)],nvmax=10)
+enroll_regfit_summary=summary(enroll_regfit)
+enroll_regfit_summary
+plot(enroll_regfit_summary$cp,xlab="Number of Variables",ylab="Cp")
+
+
+```
+The plot shows that the best model involves only a single predictor, in this case direct_certs. Let's make a model for it.
+
+```{r}
+enrollment_fit = lm(change~direct_certs,data=fy13_16_enrollment)
+plot(y=fy13_16_enrollment$change,x=fy13_16_enrollment$direct_certs,main="Change in Budget")
+abline(enrollment_fit,col="red")
+summary(enrollment_fit)
+```
+
+###Previous Years' Budget Model
+
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/16abf494-6792-4779-8886-46d4b24d5167
+
+This first linear model didn't work so well, so I tried adding back 2 of the variables that I had removed from consideration for the model: 2013 budget amount and 2016 budget amount.
+```{r}
+enroll_regfit_2=regsubsets(change~.,data=fy13_16_enrollment[,c(-1,-5,-6,-7)],nvmax=10)
+enroll_regfit_2_summary=summary(enroll_regfit_2)
+enroll_regfit_2_summary
+plot(enroll_regfit_2_summary$cp,xlab="Number of Variables",ylab="Cp")
+
+
+```
+
+The new subset selection suggests that the best model for change in budget consists of a multiple linear model using the 2013 budget and 2016 budget. The R-squared value is much higher than the previous model using only direct certifications. 
+```{r}
+enrollment_fit_2 = lm(change~Budget13+Budget16,data=fy13_16_enrollment)
+summary(enrollment_fit_2)
+```
+
+##Linear Regression Model of Budget Change vs At Risk Students with Residual Analysis
+
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/61897a8d-c546-4d39-bb27-6ad345a3b8ac
+
+I want to develop a model to find whether more or less funding has been devoted to schools with a high proportion of at risk students in recent years.
+```{r}
+fy16_at_risk_budgeting=fy16_school_budget_data[fy16_school_budget_data$budget_allocation_category=="At-Risk",]
+fy16_at_risk_budgeting$at_risk_student_num=as.integer(fy16_at_risk_budgeting$fy16_budgeted_enrollment*fy16_at_risk_budgeting$at_risk_students)
+plot(x=fy16_at_risk_budgeting$at_risk_student_num,y=fy16_at_risk_budgeting$change_in_budget_from_fy15,main="Change in Budget vs Number of at Risk Students",ylab="Change in Budget ($)",xlab="Number of at Risk Students")
+at_risk_lin_mod=lm(change_in_budget_from_fy15~at_risk_student_num,data=fy16_at_risk_budgeting)
+summary(at_risk_lin_mod)
+abline(at_risk_lin_mod,col="red")
+```
+
+The correlation between the change in funding and the number of at risk students is not very significant. Let's look at the residuals and see if there might some plausible alternate model that could be more effective.
+
+```{r}
+fy16_at_risk_budgeting$pred = 307364.8+566.8*fy16_at_risk_budgeting$at_risk_student_num
+fy16_at_risk_budgeting$res = fy16_at_risk_budgeting$change_in_budget_from_fy15-fy16_at_risk_budgeting$pred
+plot(x=fy16_at_risk_budgeting$at_risk_student_num,y=fy16_at_risk_budgeting$res,main="Residual of Budget Change Prediction",ylab="Residual",xlab="Number of at Risk Students")
+```
+From the residual plot, it looks like the model that was created performs poorly for the schools with a small number of at risk students and a high increase in budget.Let's try removing these cases and creating a new linear model.
+```{r}
+#Remove all the outliers and recreate the same model
+fy16_no_outlier = fy16_at_risk_budgeting[fy16_at_risk_budgeting$change_in_budget_from_fy15<1750000,]
+plot(x=fy16_no_outlier$at_risk_student_num,y=fy16_no_outlier$change_in_budget_from_fy15,main="Change in Budget vs Number of at Risk Students",ylab="Change in Budget ($)",xlab="Number of at Risk Students")
+at_risk_lin_mod_no_outlier=lm(change_in_budget_from_fy15~at_risk_student_num,data=fy16_no_outlier)
+summary(at_risk_lin_mod_no_outlier)
+abline(at_risk_lin_mod_no_outlier,col="red")
+```
+The summary reveals that a much higher (though still not ideal) amount of the variance of the data can be accounted for with this new model on this new dataset with the outliers removed.
+
+
+New residual plot
+```{r}
+fy16_no_outlier$pred = -146384.1+1064*fy16_no_outlier$at_risk_student_num
+fy16_no_outlier$res = fy16_no_outlier$change_in_budget_from_fy15-fy16_no_outlier$pred
+plot(x=fy16_no_outlier$at_risk_student_num,y=fy16_no_outlier$res,main="Residual of Budget Change Prediction",ylab="Residual",xlab="Number of at Risk Students")
+
+```
+
+The residual plot for this new model looks a lot more randomly scattered, indicating that this model is a better model than the previous model.
+
+
+##Distribution of Funding Type by School Type
+
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/c0d0088b-6560-41b5-8564-3fc5260026a3
+
+```{r}
+# Separate the fy15 data based on the type of school
+elementary_school=fy15_data_for_tableau[fy15_data_for_tableau$school_type=="Elementary School",]
+alternative_school=fy15_data_for_tableau[fy15_data_for_tableau$school_type=="Alternative School",]
+art_school=fy15_data_for_tableau[fy15_data_for_tableau$school_type=="Art School",]
+education_campus=fy15_data_for_tableau[fy15_data_for_tableau$school_type=="Education Campus",]
+high_school=fy15_data_for_tableau[fy15_data_for_tableau$school_type=="High School",]
+middle_school=fy15_data_for_tableau[fy15_data_for_tableau$school_type=="Middle School",]
+special_education_center=fy15_data_for_tableau[fy15_data_for_tableau$school_type=="Special Education Center",]
+stay_school=fy15_data_for_tableau[fy15_data_for_tableau$school_type=="STAY School",]
+
+#Aggregate based on the school type
+elementary_school_agg=aggregate(elementary_school$total_cost,by=list(elementary_school$budget_sub_category),FUN=sum)
+elementary_school_agg$school_type="Elementary School"
+alternative_school_agg=aggregate(alternative_school$total_cost,by=list(alternative_school$budget_sub_category),FUN=sum)
+alternative_school_agg$school_type="Alternative School"
+art_school_agg=aggregate(art_school$total_cost,by=list(art_school$budget_sub_category),FUN=sum)
+art_school_agg$school_type="Art School"
+education_campus_agg=aggregate(education_campus$total_cost,by=list(education_campus$budget_sub_category),FUN=sum)
+education_campus_agg$school_type="Education Campus"
+high_school_agg=aggregate(high_school$total_cost,by=list(high_school$budget_sub_category),FUN=sum)
+high_school_agg$school_type="High School"
+middle_school_agg=aggregate(middle_school$total_cost,by=list(middle_school$budget_sub_category),FUN=sum)
+middle_school_agg$school_type="Middle School"
+special_education_center_agg=aggregate(special_education_center$total_cost,by=list(special_education_center$budget_sub_category),FUN=sum)
+special_education_center_agg$school_type="Special Education Center"
+stay_school_agg=aggregate(stay_school$total_cost,by=list(stay_school$budget_sub_category),FUN=sum)
+stay_school_agg$school_type="STAY School"
+
+#find sum of each of the budget amounts by school type and divide the amounts by that sum to get normalized
+elementary_school_agg$x=elementary_school_agg$x/sum(elementary_school_agg$x)
+art_school_agg$x=art_school_agg$x/sum(art_school_agg$x)
+education_campus_agg$x=education_campus_agg$x/sum(education_campus_agg$x)
+high_school_agg$x=high_school_agg$x/sum(high_school_agg$x)
+middle_school_agg$x=middle_school_agg$x/sum(middle_school_agg$x)
+special_education_center_agg$x=special_education_center_agg$x/sum(special_education_center_agg$x)
+stay_school_agg$x=stay_school_agg$x/sum(stay_school_agg$x)
+#Stick all these aggregate tables together again
+fy15_budget_agg=rbind(elementary_school_agg,art_school_agg,education_campus_agg,high_school_agg,middle_school_agg,special_education_center_agg,stay_school_agg)
+colnames(fy15_budget_agg)=c("Budget_Category","Percent_Budget","School_Type")
+
+ggplot(fy15_budget_agg, aes(School_Type, Percent_Budget, fill = Budget_Category)) + 
+  geom_bar(stat="identity", position = "dodge")
+
+
+```
+
+##Comparison of Special Education Wages between Special-Ed and Non Special-Ed Schools
+
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/e4e6dcbe-f489-4425-914f-c4ed379becc3
+
+I want to compare the wages of special ed instructors at specifically special education schools and special ed instructors at non-special education schools. And then I want to develop a model for predicting whether or not any given special education teacher works in a special education school or in another type of school.
+```{r}
+fy15_data_for_tableau_clean=fy15_data_for_tableau[fy15_data_for_tableau$total_staff_quantity>=1,]
+fy15_special_ed=fy15_data_for_tableau_clean[fy15_data_for_tableau_clean$budget_sub_category=="Special Education",]
+fy15_special_ed$is_special_ed=fy15_special_ed$school_type=="Special Education Center"
+fy15_special_ed$wage=fy15_special_ed$total_cost/as.double(fy15_special_ed$total_staff_quantity)
+ggplot(fy15_special_ed,aes(x=is_special_ed,y=wage))+geom_boxplot()
+```
+
+It appears that all the wages are the same between the special education centers and the regular grade schools. So this insight basically only serves to show that the schools in Washington DC have regulated funds based on the numbers of teachers, coordinators, and aides.
+
+##K-means clustering by Ward
+
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/51deac0a-3eae-4fed-b9c1-1e541ddc709c
+
+I wanted to see if there could be any distinct differences by ward in the school's distribution of non-regular students (eg. early childhood students). First I developed a simple barchart of the distribution of students among these wards. (Note: everything is normalized by dividing by the total number of students.)
+```{r}
+fy16_enrollment_perc=fy16_enrollment_clean
+fy16_enrollment_perc[,5:10]=fy16_enrollment_perc[,5:10]/fy16_enrollment_perc$total_projected_enrollment
+fy16_enrollment_perc_reshape=melt(fy16_enrollment_perc[,4:10],id.vars="ward")
+fy16_enrollment_perc_reshape=aggregate(data=fy16_enrollment_perc_reshape,value~ward+variable,FUN=mean)
+ggplot(fy16_enrollment_perc_reshape, aes(x=as.factor(ward),y=value,fill=variable)) + 
+  geom_bar(stat="identity", position = "dodge")
+
+
+```
+
+A few distinct features can be seen just from an eye test. Wards 2 and 3 appear to have the lowest proportion of students with special qualifications or accommodations. Wards 1 and 4 have significantly higher proportion of english language learner students.
+
+I tell the model to generate 8 clusters, and then I reassign the cluster numbers to match the ward numbers. This is the confusion matrix I get.
+
+```{r}
+set.seed(1996)
+cluster_model=kmeans(fy16_enrollment_perc[,5:10],8,nstart=15)
+reassign=data.frame(cluster_model$cluster,fy16_enrollment_perc$ward)
+map=data.frame(c(1,2,8,4,6,5,7,3),c(1:8))
+colnames(map)=c("model","actual")
+reassign$cluster_model.cluster=map$actual[match(reassign$cluster_model.cluster,map$model)]
+
+table(reassign$cluster_model.cluster,reassign$fy16_enrollment_perc.ward)
+42/113
+```
+
+This model only has a 42/113 or .372 rate of success. However it does perform fairly well at predicting ward 3 and ward 7. Ward 3 was to be expected, since it has a very unique distribution of means of these different student groups. The clustering predicted ward 7 a lot, and many of these were misclassifications, especially for wards 5,7,8. This suggests that the distribution of special students among these wards is pretty similar, and looking back at the bar plot confirms this conjecture.
+
+## **At-Risk Budget**{.tabset .tabset-fade}
+
+### Introduction
+
+To improve	 equitable	 public	 school	 funding	 across	 the	 city, the	DC	Council	passed	the	Fair Student Funding and	SchoolBased Budgeting	 Amendment Act in	 2013.	 This	 act	 added, for	 the	 first	 time, an at-risk weight	 to	 the	 Uniform	 Per	Student	 Funding	 Formula	 (UPSFF)-meaning	 that	 all	 DC	
+public	 schools,	 both	 DCPS	 and	 public	 charter	 schools,	 now	receive	additional	 funding	based	on	 the	number	of	enrolled	students	at	their	school	who	meet	the	at-risk criteria.
+
+The Fair Funding Act defines a student as at-risk
+if they identify as:
+
+1. Homeless;
+
+2. In foster care;
+
+3. Eligible for food stamps or welfare; or
+
+4. One year older, or more, than the expected
+age for their enrolled grade level. 
+
+To improve	 equitable	 public	 school	 funding	 across	 the	 city,	the	DC	Council	passed	the	Fair Student Funding and	SchoolBased Budgeting	 Amendment Act in	 2013.	 This	 act	 added, for	 the	 first	 time, an at-risk weight	 to	 the	 Uniform	 Per	Student	 Funding	 Formula	 (UPSFF)-meaning	 that	 all	 DC	public	 schools,	 both	 DCPS	 and	 public	 charter	 schools,	 now	receive	additional	 funding	based	on	 the	number	of	enrolled	students	at	their	school	who	meet	the	at-risk criteria.
+
+Currently, schools receive $2,079	per	student	who	meets	the	at-risk	criteria.
+
+```{r, include=FALSE}
+# Setup
+# Add at risk budget as column
+df_at_risk_am <- dplyr::filter(fy16_school_budget_data, budget_allocation_category=="At-Risk")
+df_at_risk16 <- fy16_budgeted_student_enrollment_data
+df_at_risk16 <- df_at_risk16[order(df_at_risk16$school_name),]
+df_at_risk_am <- df_at_risk_am[order(df_at_risk_am$school_name),]
+df_at_risk16$at_risk_budget <- df_at_risk_am$amount
+# Add title budget
+df_at_risk_am <- dplyr::filter(fy16_school_budget_data, budget_allocation_category=="Title")
+df_at_risk_am <- df_at_risk_am[order(df_at_risk_am$school_name),]
+df_at_risk16$title_funding <- df_at_risk_am$amount
+df_at_risk16$perc_at_risk <- df_at_risk_am$at_risk_students
+```
+
+First let's look at a correlation matrix
+```{r}
+pairs(df_at_risk16[5:13])
+```
+
+Now let's look at the distrbution:
+```{r}
+sd(df_at_risk16$at_risk_budget)
+summary(df_at_risk16$at_risk_budget)
+ggplot(data=df_at_risk16,mapping=aes(at_risk_budget)) + geom_histogram(bins=30)
+```
+
+The standard deviation is almost as high as the mean, meaning At Risk Budget is highly varied. This is going to make it harder to predict. Furthermore, the distribution is heavily right skewed.
+
+Another thing to note is how correlated At Risk Funding and Title Funding are:
+```{r}
+corr(cbind(df_at_risk16$title_funding,df_at_risk16$at_risk_budget))
+```
+
+This makes sense because a school eligible for more title funding is also going to have more at risk students.
+
+### Linear Regression
+
+We will use this as a baseline. 
+
+```{r,include=FALSE}
+require(randomForest)
+require(gbm)
+set.seed(11)
+train=sample(1:109,76)
+
+colnames(df_at_risk16)[10] <- paste("one_year_older")
+df <- data.frame(df_at_risk16[5:14])
+df[] <- lapply(df, function(x) ifelse(is.na(x), median(x, na.rm = TRUE), x))
+m=dim(df[-train,])[1]
+```
+
+Let's start with a simple linear fit.
+
+```{r}
+fit = lm(at_risk_budget~.,data = df[train,])
+summary(fit)
+fit
+```
+
+This produced a relative high R2 and a low p-value. 
+
+### Random Forest
+
+First we tune the parameters.
+```{r}
+dim(df)
+# Test for optimal mtry
+oob.err=double(9)
+test.err=double(9)
+for(mtry in 1:9){
+  fit=randomForest(at_risk_budget~.,data=df,subset=train,mtry=mtry,ntree=400)
+  oob.err[mtry]=fit$mse[400]
+  pred=predict(fit,df[-train,])
+  test.err[mtry]=with(df[-train,],mean((at_risk_budget-pred)^2))
+  cat(mtry," ")
+}
+matplot(1:mtry,cbind(test.err,oob.err),pch=19,col=c("red","blue"),type="b",ylab="Mean Squared Error")
+legend("topright",legend=c("Test","OOB"),pch=19,col=c("red","blue"))
+mtry <- which.min(oob.err)
+
+# Test for optimal number of trees
+oob.err=double(10)
+test.err=double(10)
+ntree = seq(100,1000,100)
+for(idx in 1:10){
+  fit=randomForest(at_risk_budget~.,data=df,subset=train,mtry=mtry,ntree=ntree[idx])
+  oob.err[idx]=fit$mse[ntree[idx]]
+  pred=predict(fit,df[-train,])
+  test.err[idx]=with(df[-train,],mean((at_risk_budget-pred)^2))
+  cat(ntree[idx]," ")
+}
+matplot(ntree,cbind(test.err,oob.err),pch=19,col=c("red","blue"),type="b",ylab="Mean Squared Error")
+legend("topright",legend=c("Test","OOB"),pch=19,col=c("red","blue"))
+ntree <- ntree[which.min(test.err)]
+```
+
+Then we use the optimal ```mtry``` and ```ntree``` to fit a random forrest.
+```{r}
+rf.fit=randomForest(at_risk_budget~.,data=df,subset=train,mtry=mtry,ntree=ntree)
+rf.fit
+```
+
+The random forest produces a lower R2 than the linear model.
+
+###Boosting
+
+Now we fit a boosting model:
+```{r}
+boost=gbm(at_risk_budget~.,data=df[train,],
+          distribution="gaussian",
+          n.trees=ntree,shrinkage=0.01,
+          interaction.depth=4)
+summary(boost)
+```
+
+According to boosting, the most important predictor are direct certifications, title funding, and percentage of students at risk. These all make intuitive sense.
+
+Let's look at the plots for the top four predictors:
+```{r}
+par(mfrow=c(2,2))
+plot(boost,i="direct_certs",col="red")
+plot(boost,i="perc_at_risk",col="blue")
+plot(boost,i="title_funding",col="red")
+plot(boost,i="special_education",col="blue")
+```
+
+```{r,include=FALSE}
+par(mfrow=c(1,1))
+```
+
+### SVM
+
+```{r}
+require(e1071) 
+tuned = tune.svm(at_risk_budget~., data = df[train,], 
+                 cost = 1:10,
+                 tunecontrol=tune.control(cross=10))
+tuned
+best_cost <- tuned$best.model$cost
+svmfit=svm(at_risk_budget~., data = df[train,],cost=best_cost)
+
+summary(svmfit)
+```
+
+### Ridge Regression and Lasso
+```{r}
+df_norm <- df
+df_norm[1:7] <- scale(df_norm[1:7]) # Normalize all predictors
+df_norm[9:10] <- scale(df_norm[9:10])
+x=model.matrix(at_risk_budget~.-1,data=df_norm[train,]) 
+y=df_norm[train,]$at_risk_budget
+```
+
+**Ridge Regression**
+
+```{r}
+fit.ridge=glmnet(x,y,alpha=0)
+plot(fit.ridge,xvar="lambda",label=TRUE)
+```
+
+**Lasso**
+```{r}
+fit.lasso=glmnet(x,y)
+plot(fit.lasso,xvar="lambda",label=TRUE)
+```
+
+### Comparison of Models
+
+Finally, let's use run all the models on a validation set and compare the mean squared errors.
+
+```{r}
+pred.rf = predict(rf.fit, df[-train,])
+rf.err = mean((pred.rf-df[-train,])^2)/m
+
+pred.boost = predict(boost, df[-train,],n.trees=ntree)
+boost.err = mean((pred.boost-df[-train,])^2)/m
+
+pred.lm = predict(fit,df[-train,])
+lm.err = mean ((pred.lm - df[-train,])^2)/m
+
+predictedY <- predict(svmfit,df[-train,])
+error <- df[-train,]$at_risk_budget - predictedY
+svm.err <- mean(error^2)/m
+
+pred.ridge <- predict(fit.ridge, s=0, newx=model.matrix(at_risk_budget~.-1,data=df_norm[-train,]) )
+ridge.err <- mean((pred.ridge- df[-train,])^2)/m
+
+pred.lasso <- predict(fit.lasso, s=0, newx=model.matrix(at_risk_budget~.-1,data=df_norm[-train,]) )
+lasso.err <- mean((pred.lasso- df[-train,])^2)/m
+
+errors = data.frame(method=c("Random Forest","Boosting","Linear Regression","Support Vector Machine","Ridge Regression","Lasso"),
+                    err = c(rf.err, boost.err,lm.err,svm.err, ridge.err,lasso.err))
+errors
+```
+
+Which model produces the lowest MSE?
+```{r}
+errors[which.min(errors$err),]
+```
+
+```{r}
+ggplot(errors, aes(y=err, x=method)) + 
+  geom_bar(stat = "identity") + xlab("") + ylab("Mean Squared Error") +
+  coord_flip()
+```
+
+
+
+
+
+
+
+
+## *Predicting Whether a School has an Early Childhood Program* {.tabset .tabset-fade}
+
+### Pre-Processing - Introduction
+
+The proprtion of children in Early Childhood Programs have been increasing drastically over the last several years. Participation in Early childhood programs can have a huge effect in a child's cognitive, language and social development, and is particularly effective for children in lower income neighborhoods. Currently Washington DC is the seventh highest in terms of poverty level, and has been in the top ten for many years. According to "The Development of Cognitive Abilities" writtten by Campbell, the effects of the early school years can continue to have beneficial effects on students into adulthood.
+
+For my set of insights, I wanted to look at Early Childhood Program and using various variables predict whether a school had an early childhood program or not. Currently the data has how many students are enrolled in an early childhood program, so I mutated the data to say, if a school has at least 1 person in an early childhood program than there was an early childhood program available, and this was denoted by a one. I wanted to see if special needs and socioeconomic factors could predict this. So I created two new variable called Special_needs_perc which is the number of special needs students/total number of students and homeless_foster_perc which is the number of homeless and foster kids / total number of students. I made sure to standardize the special needs and homeless/foster factors to a percentage of total students so that the data would not be skewed to larger schools. To get an idea of the plot, it is as follows:
+
+
+```{r warning=FALSE}
+
+efy16bse = fy16_budgeted_student_enrollment_data
+efy16bse = dplyr::mutate(efy16bse, special_education_perc = special_education/total_projected_enrollment)
+efy16bse = dplyr::mutate(efy16bse, homeless_foster_perc = homeless_foster/total_projected_enrollment)
+efy16bse = dplyr::mutate(efy16bse, early_child_prog = ifelse(early_childhood > 0, 1,0))
+efy16bse = dplyr::select(efy16bse, special_education_perc, homeless_foster_perc, early_child_prog)
+efy16bse <- na.omit(efy16bse)
+efy16bse = dplyr::filter(efy16bse, special_education_perc>0, homeless_foster_perc>0)
+
+ggplot(efy16bse, aes(x=special_education_perc, y=homeless_foster_perc, colour = early_child_prog>0 ))+ geom_point() + scale_colour_manual(name = 'state', labels = c("No Early Child Program", "Early Child Program"),values = setNames(c('Red','Blue'),c(T,F)))
+
+```
+
+### Logistic Regression
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/6e60cbc0-05cc-4414-98d6-af89af3ef078
+
+The first regression I ran was logistic regression, and I wanted to see how the percentage of special education students and the percentage of homeless/foster students would do in predicting whether there was an early childhood program or not. We used a sample size of 30% and a training size of 70%.
+
+```{r}
+set.seed(1)
+efy16bsesample = sort(sample(nrow(efy16bse),nrow(efy16bse)*.7))
+efy16bse_test <- efy16bse[-efy16bsesample,]
+efy16bse_train <- efy16bse[efy16bsesample,]
+
+Elogreg2 = glm(early_child_prog ~ special_education_perc+homeless_foster_perc, data = efy16bse_train, family = gaussian)
+Elogreg2_pred = predict(Elogreg2, newdata = efy16bse_test, type = "response")
+Elogreg2_pred = ifelse(Elogreg2_pred>0.5,1,0) %>% data.frame()
+mean(Elogreg2_pred$.== efy16bse_test$early_child_prog)#0.65
+table(Elogreg2_pred$., efy16bse_test$early_child_prog)
+Elogreg_comb = cbind(efy16bse_test, Elogreg2_pred)%>% mutate(Correct = ifelse(early_child_prog == ., 0, 1))
+
+```
+
+We can see our logistic regression predicts with about 90% accuracy concerning whether or not there is a early childhood program or not, using special needs and foster/homeless percentages. This is better than the 76% than guessing yes, which is the most likely outcome
+
+The graph of the results are as follows:
+
+```{r}
+ggplot(Elogreg_comb, aes(x=special_education_perc, y=homeless_foster_perc, colour = Correct>0))+ geom_point() + scale_colour_manual(name = 'state', labels = c("Correct", "Incorrect"), values = setNames(c('Orange','black'),c(T,F)))
+
+```
+
+We can see that it did a good job, with about a 90% accuracy. Next I will use Linear Discriminant Analysis to see if I could do a better job.
+
+### Linear Discriminant Analysis
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/9bfd1dac-02cf-4da0-a287-d3bbdf2fb393
+
+For this next chunk we ran the Linear Discriminant Analysis code using the same variables, Special Education and Foster/Homeless percentage
+
+```{r}
+#Linear Discriminant Analysis
+Elda1 = lda( early_child_prog ~ special_education_perc + homeless_foster_perc, data = efy16bse_train)
+Elda.preds = predict(Elda1,efy16bse_test) %>% data.frame() 
+
+mean(Elda.preds$class==efy16bse_test$early_child_prog)
+table(Elda.preds$class, efy16bse_test$early_child_prog)
+Elda.preds = cbind(efy16bse_test, Elda.preds)%>% mutate(Correct = ifelse(early_child_prog == class, 0, 1))
+
+```
+
+We also got a 90% accuracy as seen below, just like in the Logistic Regression.
+
+In fact if we look at the graph of the correct and incorrect responses, the LDA predicted the same exact results and got the exact same responses incorrect and correct. We can see the graph below
+
+```{r}
+ggplot(Elda.preds, aes(x=special_education_perc, y=homeless_foster_perc, colour = Correct>0))+ geom_point() + scale_colour_manual(name = 'state', labels = c("Correct", "Incorrect"), values = setNames(c('Orange','black'),c(T,F)))
+```
+
+
+### Quadratic Discriminant Analysis
+
+Now we want to see how the Quadratic Discriminant Analysis does vs the other two analysis using the same variables.
+
+```{r}
+#Quadratic Discriminant Analysis
+Eqda1 = qda( early_child_prog ~ special_education_perc + homeless_foster_perc, data = efy16bse_train)
+Eqda.preds = predict(Eqda1,efy16bse_test) %>% data.frame()
+mean(Eqda.preds$class==efy16bse_test$early_child_prog)
+table(Eqda.preds$class, efy16bse_test$early_child_prog)
+Eqda.preds = cbind(efy16bse_test, Eqda.preds)%>% mutate(Correct = ifelse(early_child_prog == class, 0, 1))
+```
+
+When we run the code we get a 80% accuracy. This is 10% lower than the previous 2 methods, so it would be better to stick with the Logistic Regression or the LDA.
+
+The graph is provided below:
+
+```{r}
+ggplot(Eqda.preds, aes(x = special_education_perc, y = homeless_foster_perc, colour = Correct>0))+ geom_point() + scale_colour_manual(name = 'Correct', labels = c("Correct", "Incorrect"), values = setNames(c('Orange','black'),c(T,F)))
+```
+
+
+### K-Nearest Neighbor
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/73163281-c0d9-4e14-b8d1-defce1ff1184
+
+Lastly we want to predict whether a school has an early Childhood Program using KNN. We want to see if Nearest Neighbors will have a better result than Logistic Regression, Quadratic and LDA. The code is as follows.
+
+```{r}
+Etesting = dplyr::select(efy16bse_test, special_education_perc, homeless_foster_perc, early_child_prog)
+Etest_bind = dplyr::select(efy16bse_test, special_education_perc, homeless_foster_perc)
+Etraining = dplyr::select(efy16bse_train, special_education_perc, homeless_foster_perc, early_child_prog)
+Etraining_bind = dplyr::select(efy16bse_train, special_education_perc, homeless_foster_perc)
+
+Etrain_factor = dplyr::select(Etraining, early_child_prog)
+Etrain_factor = as.factor(Etrain_factor$early_child_prog)
+Etest_factor = dplyr::select(Etesting, early_child_prog)
+Etest_factor = as.factor(Etest_factor$early_child_prog)
+
+Eknn.pred=knn(Etraining_bind,Etest_bind,Etrain_factor,k=5)
+Eknn.pred2 = Eknn.pred %>% data.frame
+table(Eknn.pred,Etest_factor)
+mean(Eknn.pred==Etest_factor)
+
+```
+
+KNN gets a fairly good result. When looking at the results we still got a 85% accuracy, which is better than QDA but worse than both LDA and Logistic Regression. 
+
+Now if we run the graph, we can see the results and which points were predicted correctly and incorrectly.
+
+```{r}
+Eknn.pred2 = cbind(Etesting,Eknn.pred2) %>% dplyr::mutate(correct=ifelse(.==early_child_prog, 1, 0)) 
+
+ggplot(Eknn.pred2, aes(x = special_education_perc, y = homeless_foster_perc, colour = correct>0))+ geom_point() + scale_colour_manual(name = 'Correct', labels = c("Incorrect", "Correct"), values = setNames(c('black','Orange'),c(T,F)))
+
+```
+
+In conclusion we should use either Logistic Regression or the LDA to predict Early Childhood Program with an accuracy of 90%. However, all the tools improve the prediction ranging from about 5% to 15%
+
+### Decision Tree
+https://data.world/wangweiyi722/f-17-eda-project-5/insights/3e290c6c-6a1b-475d-a2e1-6181d23667d8
+
+Next I wanted to see how a decision tree would predict Early Child Program. For this we used more all the variables provided to us.
+
+After a lot of pre-processing we ran the following code to create a tree.
+
+```{r}
+efy16bsetr = fy16_budgeted_student_enrollment_data
+colnames(efy16bsetr)[10] <- "one_year_older_for_grade"
+
+efy16bsetr = dplyr::select(efy16bsetr,  school_type, special_education, direct_certs, one_year_older_for_grade, early_childhood, total_projected_enrollment, ward, school_type)
+
+efy16bsetr <- na.omit(efy16bsetr)
+
+ecp = dplyr::mutate(efy16bsetr, early_child_prog=ifelse(early_childhood > 0, 'Yes','No')) 
+ecp = dplyr::select(ecp, early_child_prog)
+ecp = as.factor(ecp$early_child_prog)
+efy16bsetr = dplyr:: mutate(efy16bsetr, special_education_perc = special_education/total_projected_enrollment) %>% mutate(direct_certs_perc = direct_certs/total_projected_enrollment) %>% mutate(one_year_older_perc = one_year_older_for_grade/total_projected_enrollment)
+efy16bsetr = dplyr:: select(efy16bsetr, ward, school_type, special_education_perc, direct_certs_perc, one_year_older_perc)
+
+efy16bsetr= data.frame(efy16bsetr, ecp)
+
+set.seed(1)
+train =sample(1:nrow(efy16bsetr),67)
+
+tree1 = tree(ecp ~ ward + special_education_perc + one_year_older_perc + direct_certs_perc, data=efy16bsetr, subset = train)
+summary(tree1)
+plot(tree1)
+text(tree1,pretty=0)
+tree.pred=predict(tree1,efy16bsetr[-train,],type="class")
+with(efy16bsetr[-train,],table(tree.pred,ecp))
+
+
+```
+
+We can see that we were able to classify whether a school has an Early Childhood Program with a success rate of 88% which is pretty good considering if we were simply to guess the most likely outcome of yes a school does have an Early Child Program, we would guess correctly on 64% of the time. This is a 22% increase. 
+
+Now Let's see if we can prune the tree into a less complicated tree to avoid overfitting
+
+```{r}
+#tree2 =cv.tree(tree1, FUN=prune.misclass)
+#plot(tree2)
+prune.tree2=prune.misclass(tree1,best=2)
+plot(prune.tree2);text(prune.tree2,pretty=0)
+```
+
+After looking at the misclassification graph, I wanted to try the tree out at size 2 and size 5. After testing, it seems like size 2 is more ideal, and that is what I chose to prune that graph to.
+
+```{r}
+tree.pred=predict(prune.tree2,efy16bsetr[-train,],type="class")
+with(efy16bsetr[-train,],table(tree.pred,ecp))
+(9+22)/34
+```
+
+We pruned the graph, and now only 1 factor is deciding whether to predict yes or no for whether or not a school has early childhood Program or not. 
+
+Looking at the pruned results, we see that the classification actually slightly improved to 91%. This is a significant increase than randomly guessing, and the pruned tree is much more simpler than the previous tree. 
+
+I wanted to look into this variable, and this variable is one year older percentage. What this variable is, is the percentage of students that are one year older that they ought to be for their grade, meaning that they started school late or they were held back. According to our model, if 15% of students are a year older than the model predicts with 91% accuracy that there are no Early Childhood Prgram for the school. This shows how important Early Childhood Programs are to the success of students in school later on in life, and shows that there is a direct correlation to success and these Early Childhood Programs and how necessary they are. 
+
+##**Enrollment Fluctuation**
+
+### Intro
+
+```{r}
+# Building the data frame
+df <- fy16_school_budget_data %>%
+    dplyr::filter(budget_allocation_category=="Enrollment") %>%
+    dplyr::inner_join(
+      fy16_budgeted_student_enrollment_data,
+      by="school_name") %>%
+    dplyr::inner_join(
+      public_schools_3,
+      by=c("school_code"="school_id")
+    ) %>%
+    dplyr::mutate(
+      enrollment_up=
+        ifelse(
+          change_in_enrollment_from_fy15>0,TRUE,FALSE))
+
+  original = 
+    df$fy16_budgeted_enrollment - 
+    df$change_in_enrollment_from_fy15
+  difference = 
+    df$fy16_budgeted_enrollment -
+    original
+  enrollment_perc_change = (difference / original) * 100
+  df <- data.frame(df, enrollment_perc_change)
+
+  wards_pop_info <- data.frame(
+    wards_info$ward,
+    wards_info$pop_2010,
+    wards_info$pop_2015
+  )
+  colnames(wards_pop_info) <- c("ward","pop_2010","pop_2015")
+  wards_pop_info <- dplyr::mutate(
+    wards_pop_info,
+    ward_pop_perc_change=(
+      ((pop_2015-pop_2010)/pop_2010)*100
+    )
+  )
+  df <- df %>%
+    dplyr::inner_join(
+      wards_pop_info,
+      by=c("ward.x"="ward")
+    )
+```
+
+I looked at schools' enrollment fluctuation between 2015 and 2016. I was not trying to predict any budgetary changes, just enrollment fluctuation. 
+
+**Why enrollment fluctuation?**
+Filtering the dataset, I saw schools with a shocking amount of flux between 2015 and 2016 in their number of enrolled students. For example, see the far-right column, below.
+
+```{r,label="build df1"}
+df1 <- df %>%
+  dplyr::filter(school_code>=221&school_code<=232) %>%
+  dplyr::select(
+    school_name,
+    fy16_budgeted_enrollment,
+    change_in_enrollment_from_fy15,
+    enrollment_perc_change
+  )
+kable(df1, format="markdown")
+```
+
+Notice the school with 30% change. How do its teachers deal with 30% more students one year to the next? 
+
+What factors play into a school's change in enrollment? 
+
+### Wards of D.C.
+
+`Ward` will often show up as a predictor in my models. 
+
+DC is divided into 8 wards. 
+
+![](https://media.data.world/UVJdiV4MSxa2H2fHDtCg_image.png)
+
+### **Predicting Enrollment Rise or Decline**{.tabset .tabset-fade}
+
+#### Ward as Predictor
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/7e5e9420-6c27-40bc-b21c-7a0aaec39ada
+
+Initially, I wondered why a school's enrollment might rise or decline. 
+
+We can see that ward makes a difference:
+
+```{r}
+ggplot(df, aes(factor(ward.x),fill=enrollment_up)) +
+  geom_bar(position="dodge") +
+  scale_fill_manual(values=c("#D55E00","#009E73"))
+```
+
+*The plot shows the number of schools per ward where enrollment rose and declined between 2015 and 2016. Green = up; red = down.*
+
+**Why might ward make a difference?** It may be that a ward's overall population change can account for its schools' rise or decline in enrollment. It may also be that school policies are set at the ward level rather than the municipal level.
+
+(See next tab)
+
+#### K-Nearest Neighbors
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/b3dfebbe-daff-4c0d-8e59-2cb73ff670b9
+
+**In addition to ward, at-risk students might make a difference.** A high proportion of at-risk students may be more likely to lead to a decline in enrollment. 
+
+```{r}
+ggplot(df,aes(x=at_risk_students*100,y=ward_pop_perc_change)) +
+  geom_point(aes(colour=enrollment_up)) +
+  ggtitle("Enroll Rise/Fall vs. % At-Risk Students and Ward Pop % Change 2010-2015")
+```
+
+There's no clear decision boundary, but let's try KNN just to be sure: 
+
+```{r}
+Xlag=cbind(df$at_risk_students*100, df$ward_pop_perc_change)
+train=sample(1:nrow(df),.7*nrow(df))
+x=df[train,]
+y=df[-train,]
+knn.pred=knn(Xlag[train,],Xlag[-train,],df$enrollment_up[train],k=1,prob=TRUE)
+table(knn.pred,df$enrollment_up[-train])
+mean(knn.pred==df$enrollment_up[-train])
+```
+
+Because of the small test set size, that number varies wildly. **LDA** and **QDA** play out the same way.
+
+### **Predicting Enrollment Percent Change**{.tabset .tabset-fade}
+
+#### Intro
+The problem with predicting enrollment rise or decline is that enrollment might only change by 1 student or it might change by 900. "Enrollment rise" really isn't a good category. 
+
+It'd be better to predict **enrollment percent change between 2015 and 2016**.
+
+In the plot below, I've mapped each school to its latitude and longitude. The school's color indicates its percent change in enrollment, and its shape represents its ward.
+
+```{r}
+  ggplot(df,aes(x=longitude,y=latitude)) +
+    geom_point(aes(shape=ward.x,
+                   color=sqrt(enrollment_perc_change^2),
+                   size=3)) +
+    scale_shape_identity() +
+    scale_colour_gradientn(colours = terrain.colors(5)) +
+    ggtitle("2015-2016 Enrollment Fluctuation, by Ward")
+```
+
+(See next tab)
+
+#### Strategy
+
+To model enrollment fluctuation, I relied on **boosting** and **subset selection**. 
+
+I decided to use these methods because they are exhaustive. If these two exhaustive methods were consistently giving me very poor R^2s and RMSEs, it meant that the problem lay with the *predictors* more than with the modelling method. 
+
+In other words, I could have tried a hundred different types of model, but if I was passing them all useless data, they wouldn't do much better than subset selection or boosting.
+
+Consequently, I focused on linking in new datasets and coming up with new predictors from the data. 
+
+(See next tab)
+
+#### Boosting
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/845fe935-b954-4571-b525-cc2687ebd4b2
+
+The problem with relying on ward as a predictor is that there are 101 schools and only 8 wards. Something more targeted, like the school's zip code, might work better.
+
+I hypothesized that the school's zip code would be a very powerful predictor for the percent change in the school's enrollment. Let's use boosting to check that hypothesis.
+
+```{r include=FALSE}
+require(gbm)
+```
+```{r}
+train=sample(1:nrow(df),.7*nrow(df))
+boost.enrollment=gbm(
+  enrollment_perc_change~
+    as.factor(ward.x)+
+    as.factor(school_type.x)+
+    at_risk_students+
+    early_childhood+
+    english_language_learners+
+    special_education+
+    homeless_foster+
+    direct_certs+
+    X1_year_older_for_grade+
+    ward_pop_perc_change+
+    as.factor(zip_code),
+  data=df[train,],
+  distribution="gaussian",
+  n.trees=10000,
+  shrinkage=0.01,
+  interaction.depth=4)
+
+sum = summary(boost.enrollment)
+relinf=sum$rel.inf
+kable(data.frame(as.character(sum$var),relinf), format="markdown")
+```
+
+As expected, a school's zip code played a relatively large role in how enrollment changed between 2015 and 2016. Although this list looks different depending on the run, we can see that ward (compared with zip code) is not a relatively strong predictor.
+
+```{r}
+n.trees=seq(from=100,to=10000,by=100)
+pred.boost = predict(boost.enrollment,newdata=df[-train,],n.trees=n.trees)
+boost.err=with(df[-train,],apply((pred.boost-enrollment_perc_change)^2,2,mean))
+boost.rmse=sqrt(boost.err)
+plot(n.trees,boost.rmse,pch=19,ylab="RMSE", xlab="# Trees",main="Boosting Test Error")
+```
+
+(See next tab)
+
+#### Model Selection
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/1f1504f0-66e3-47ce-8842-1373c8c2d305
+
+I decided to try model selection using four variables:
+
+* The school type (elementary, middle...)
+* The school's ward
+* The school's zip code
+
+Because of our small testing set, I ran subset selection four times, each with a different seed value and therefore different training set. Each colored line below represents a different seed value. 
+
+```{r, warning=FALSE, message=FALSE, label="Model selection 1"}
+get_train=function(seed,df){
+  set.seed(seed)
+  train=sample(seq(nrow(df)),62,replace=FALSE)
+  return(train)
+}
+
+get_fit1=function(){
+  # subset selection
+  regfit=regsubsets(
+    enrollment_perc_change~
+      as.factor(school_type.y)+
+      as.factor(ward.x)+
+      as.factor(zip_code),
+    data=df[train,],
+    nvmax=27)
+  
+  return(regfit)
+}
+
+get_err1 = function(fit) {
+  val.errors=rep(NA,7)
+  x.test=model.matrix(
+    enrollment_perc_change~
+      as.factor(school_type.y)+
+      as.factor(ward.x)+
+      as.factor(zip_code),
+    data=df[-train,])
+  
+  for(i in 1:7){
+    coefi=coef(fit,id=i)
+    pred=x.test[,names(coefi)]%*%coefi
+    val.errors[i]=mean((df$enrollment_perc_change[-train]-pred)^2)
+  }
+  return(val.errors)
+}
+
+make_plots1=function(fit1,err1,fit2,err2,fit3,err3,fit4,err4){
+  par(mfrow=c(2,2))
+  
+  # RMSE
+  plot(sqrt(err1),pch=19,type="b",xlab="Variables",ylab="RMSE",main="RMSE",ylim=c(9,17))
+  points(sqrt(err2),type="b",col="red")
+  points(sqrt(err3),type="b",col="blue")
+  points(sqrt(err4),type="b",col="green")
+  
+  # Cp
+  sum1=summary(fit1)
+  sum2=summary(fit2)
+  sum3=summary(fit3)
+  sum4=summary(fit4)
+  #plot(sum1$cp,pch=19,type="b",xlab="Variables",ylab="Cp",main="Cp",ylim=c(-7,23))
+  plot(sum1$cp,pch=19,type="b",xlab="Variables",ylab="Cp",main="Cp",ylim=c(-15,30))
+  points(sum2$cp,type="b",col="red")
+  points(sum3$cp,type="b",col="blue")
+  points(sum4$cp,type="b",col="green")
+  
+  plot(sum1$adjr2,pch=19,type="b",xlab="Variables",ylab="Cp",main="Adj R^2",ylim=c(-.1,.45))
+  points(sum2$adjr2,type="b",col="red")
+  points(sum3$adjr2,type="b",col="blue")
+  points(sum4$adjr2,type="b",col="green")
+  
+  plot(sum1$bic,pch=19,type="b",xlab="Variables",ylab="Cp",main="BIC",ylim=c(-15,80))
+  points(sum2$bic,type="b",col="red")
+  points(sum3$bic,type="b",col="blue")
+  points(sum4$bic,type="b",col="green")
+  
+  par(mfrow=c(1,1))
+}
+
+## Best Subset Selection using zips but not change over time
+train=get_train(1,df);fit1=get_fit1();err1=get_err1(fit1)
+train=get_train(6,df);fit6=get_fit1();err6=get_err1(fit6)
+train=get_train(7,df);fit7=get_fit1();err7=get_err1(fit7)
+train=get_train(9,df);fit9=get_fit1();err9=get_err1(fit9)
+
+renderPlot(make_plots1(fit1,err1,fit6,err6,fit7,err7,fit9,err9))
+```
+
+The most representative selection seems to be seed=7 (green). 
+
+(See next tab)
+
+#### Model Selection 2
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/1f1504f0-66e3-47ce-8842-1373c8c2d305
+
+I introduced two new variables:
+
+* The school's percent change in enrollment between 2013 and 2014
+* The school's percent change in enrollment between 2014 and 2015
+
+to capture the school's shift in enrollment in previous years. I hoped that if we could capture the school's shifts in previous years, we would be better able to predict that school's shift in enrollment between 2015 and 2016.
+
+Once again, I ran selection four times with four different seed values / test sets.
+
+```{r, warning=FALSE, label="Model selection 2"}
+set_df6 = function() {
+  ec <- enrollment_changes[complete.cases(enrollment_changes), ] %>%
+    dplyr::mutate(
+      enrollment_perc_change_2013_to_2014 = (
+        (enrollment_2014-enrollment_2013)/enrollment_2013*100
+      ),
+      enrollment_perc_change_2014_to_2015 = (
+        (enrollment_2015-enrollment_2014)/enrollment_2014*100
+      ),
+      enrollment_perc_change_2015_to_2016 = (
+        (enrollment_2016-enrollment_2015)/enrollment_2015*100
+      )
+    )
+  df6 <- df %>%
+    dplyr::inner_join(ec,by="school_code")
+  return(df6)
+}
+
+get_fit2=function(){
+  # subset selection
+  regfit=regsubsets(
+    enrollment_perc_change~
+      as.factor(school_type.y)+
+      as.factor(ward.x)+
+      as.factor(zip_code)+
+      enrollment_perc_change_2013_to_2014+
+      enrollment_perc_change_2014_to_2015,
+    data=df6[train,],
+    nvmax=30)
+
+  return(regfit)
+}
+
+get_err2 = function(fit) {
+  val.errors=rep(NA,7)
+  x.test=model.matrix(
+    enrollment_perc_change~
+      as.factor(school_type.y)+
+      as.factor(ward.x)+
+      as.factor(zip_code)+
+      enrollment_perc_change_2013_to_2014+
+      enrollment_perc_change_2014_to_2015,
+    data=df6[-train,])
+
+  for(i in 1:7){
+    coefi=coef(fit,id=i)
+    pred=x.test[,names(coefi)]%*%coefi
+    val.errors[i]=mean((df6$enrollment_perc_change[-train]-pred)^2)
+  }
+  return(val.errors)
+}
+
+make_plots2=function(fit1,err1,fit2,err2,fit3,err3,fit4,err4){
+  par(mfrow=c(2,2))
+
+  # RMSE
+  plot(sqrt(err1),pch=19,type="b",xlab="Variables",ylab="RMSE",main="RMSE",ylim=c(9,14))
+  points(sqrt(err2),type="b",col="red")
+  points(sqrt(err3),type="b",col="blue")
+  points(sqrt(err4),type="b",col="green")
+
+  # Cp
+  sum1=summary(fit1)
+  sum2=summary(fit2)
+  sum3=summary(fit3)
+  sum4=summary(fit4)
+  plot(sum1$cp,pch=19,type="b",xlab="Variables",ylab="Cp",main="Cp",ylim=c(-15,40))
+  points(sum2$cp,type="b",col="red")
+  points(sum3$cp,type="b",col="blue")
+  points(sum4$cp,type="b",col="green")
+
+  plot(sum1$adjr2,pch=19,type="b",xlab="Variables",ylab="Cp",main="Adj R^2",ylim=c(0,.45))
+  points(sum2$adjr2,type="b",col="red")
+  points(sum3$adjr2,type="b",col="blue")
+  points(sum4$adjr2,type="b",col="green")
+
+  plot(sum1$bic,pch=19,type="b",xlab="Variables",ylab="Cp",main="BIC",ylim=c(-10,80))
+  points(sum2$bic,type="b",col="red")
+  points(sum3$bic,type="b",col="blue")
+  points(sum4$bic,type="b",col="green")
+
+  par(mfrow=c(1,1))
+}
+
+# zips and change over time
+df6 <- set_df6()
+train=get_train(1,df6);fit1=get_fit2();err1=get_err2(fit1)
+train=get_train(2,df6);fit2=get_fit2();err2=get_err2(fit2)
+train=get_train(3,df6);fit3=get_fit2();err3=get_err2(fit3)
+train=get_train(9,df6);fit9=get_fit2();err9=get_err2(fit9)
+
+renderPlot(make_plots2(fit1,err1,fit2,err2,fit3,err3,fit9,err9))
+```
+
+The most representative selection seems to be seed=1 (black).
+
+(See next tab)
+
+#### Comparing Model Selection
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/1f1504f0-66e3-47ce-8842-1373c8c2d305
+
+Below, I've re-plotted the two most representative selections. The line from the 'Model Selection' tab is black here; the line from the 'Model Selection 2' tab is red. 
+
+```{r}
+make_plots3=function(fit1,err1,fit2,err2){
+  par(mfrow=c(2,2))
+  
+  plot(sqrt(err1),pch=19,type="b",xlab="Variables",ylab="RMSE",main="RMSE",ylim=c(9,17))
+  points(sqrt(err2),type="b",col="red")
+  
+  # Cp
+  sum1=summary(fit1)
+  sum2=summary(fit2)
+  plot(sum1$cp,pch=19,type="b",xlab="Variables",ylab="Cp",main="Cp",ylim=c(-15,30))
+  points(sum2$cp,type="b",col="red")
+  
+  plot(sum1$adjr2,pch=19,type="b",xlab="Variables",ylab="Cp",main="Adj R^2",ylim=c(0,.45))
+  points(sum2$adjr2,type="b",col="red")
+  
+  plot(sum1$bic,pch=19,type="b",xlab="Variables",ylab="Cp",main="BIC",ylim=c(-10,80))
+  points(sum2$bic,type="b",col="red")
+  
+  par(mfrow=c(1,1))
+}
+
+renderPlot(make_plots3(fit7,err7,fit1,err1))
+```
+
+Remember that the red line represents the models that *do* use the variables measuring enrollment percent changes from previous years. Amazingly, those models do worse than the models that leave out those predictors. That suggests that not only is shift from previous years insignificant, but also it's a distraction from better predictors. 
+
+Our models' Cp and BIC values indicate that we risk overfitting as we rise above 10 predictors. Moreover, our combined low RMSE and low R^2 indicate that, while our model is seldom very far off, it's also almost never on the money. 
+
+If we optimize the Cp, BIC, and R^2 values, we can see that a model using four predictors, from our first subset selection, is going to be our best bet. 
+
+In the plot below, that model is represented by the top row:
+```{r}
+plot(fit7,scale="bic")
+```
+
+(See next tab)
+
+#### Residual analysis
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-5/insights/4904bb6c-9e9d-475c-a1d6-9d4f8bf87ba8
+
+My next step is to look at the residuals and try to detect any patterns there. To get started with analyzing the residuals of my model, I decided to plot them by latitude and longitude. I hoped we could show graphically that some wards have high residuals and others have low.
+
+The model I use here is the model we selected at the bottom of the 'Comparing Model Selection' tab. It uses the following predictors:
+
+```{r}
+coef(fit7,id=4)
+```
+
+```{r}
+x.test=model.matrix(
+  enrollment_perc_change~
+    as.factor(school_type.y)+
+    as.factor(ward.x)+
+    as.factor(zip_code),
+  data=df[-train,])
+coefi=coef(fit7,id=4)
+pred=x.test[,names(coefi)]%*%coefi
+
+# So that's 38 residuals, one for each row of testing data.
+
+# Now let's make two datasets. The first is df7_all, and it contains every data point; whichever data points were in the testing set have their errors attached. The second is df7_test, and it only has the testing data.
+set_df7_all = function() {
+  d7a <- df[-train,] %>%
+    dplyr::mutate(
+      pred_val=pred,
+      error=sqrt((enrollment_perc_change-pred_val)^2)
+    ) %>%
+    dplyr::select(
+      school_code,
+      pred_val,
+      error
+    )
+  df7_all <- df %>%
+    dplyr::left_join(
+      d7a,
+      by="school_code"
+    )
+  return(df7_all)
+}
+
+set_df7_test = function() {
+  df7_test <- data.frame(
+    df[-train,], pred) %>%
+    dplyr::mutate(
+      error=sqrt((enrollment_perc_change-pred)^2))
+  return(df7_test)
+}
+
+df7_all <- set_df7_all()
+df7_test <- set_df7_test()
+
+ggplot(df7_test,aes(x=longitude,y=latitude)) +
+  geom_point(aes(shape=ward.x,
+                 colour=error,
+                 size=3)) +
+  scale_shape_identity() +
+  scale_colour_gradientn(colours = terrain.colors(5)) + 
+  ggtitle("Residual by Ward (Testing data only)")
+```
+
+Each distinct shape represents a ward. Looking at that map, we're reminded what it means to have a low R^2 and a low RMSE: our model's predictions are seldom far off, but we're almost never right on the money.
+
+The wards where we did best look to be Ward 1 (the empty circle) and Ward 6 (the upside-down triangle). We did worst in Ward 8 (the asterisk).
+
+Here's a look at the same plot using the whole dataset. Training data is in gray, and testing data is colored (as above).
+
+```{r}
+  ggplot(df7_all,aes(x=longitude,y=latitude)) +
+    geom_point(aes(shape=ward.x,
+                   colour=error,
+                   size=3)) +
+    scale_shape_identity() +
+    scale_colour_gradientn(colours = terrain.colors(5)) +
+    ggtitle("Residual by Ward (Training data in gray)")
+```
+
+It definitely seems like our model's performance varied by ward. 
+
+Ward 8 (the asterisk) interests me most here. It seems to have the highest variance of residuals, and I wonder if that means it also has a very high variance of 2015-2016 enrollment fluctuation. If so, it could be confounding my attempts to model all the wards separately. 
+
+### **Interesting Findings**{.tabset .tabset-fade}
+
+#### Interesting Findings
+
+* **D.C. public schools' enrollment is not constant from year to year.** Between 2015 and 2016, at least one school experienced a *60%* shift in its number of enrolled students.
+
+* **We can't predict a school's percent change in enrollment based on its percent change in prior years.** As we showed in the Predicting Enrollment Percent Change -> Comparing Model Selection tab, including a school's shift over previous years actually *worsens* the model. That's a pretty stunning finding. 
+
+* **The best and most consistent predictor of a school's percent change in enrollment was the school's zip code.** Likely, environmental factors are affecting how many students enroll in the school. 
+
+* **Even including zip code, virtually no predictors in our dataset have a strong influence on enrollment percent change.** That means that enrollment percent change is decided by factors outside of our dataset, perhaps political/electoral factors. I'm positive that there is *some* model that could be made to predict at least 90% of the fluctuation in a school's enrollment. 
+
+(See next tab)
+
+#### Flaws in My Approach
+
+* I should have tried to predict the absolute value of the school's percent change in enrollment. As is, the range of percent change in enrollment was -100% to +100%. Without meaning to, I ended up trying to predict two things at once: how much the school changed by, and whether its enrollment rose or declined. 
+
+* I could have used more model types than only boosting and model selection. *However*, my thinking was that because these two very exhaustive techniques were giving me such disappointing results, the problem must be the predictors I was feeding them, not the techniques themselves (which, as I said, are exhaustive). Therefore, linking new datasets and crafting new predictors seemed to be a better use of my time.

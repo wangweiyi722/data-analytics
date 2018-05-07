@@ -1,0 +1,175 @@
+---
+resource_files:
+- .Renviron
+output:
+  html_notebook:
+    code_folding: hide
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(leaps); require(tidyverse)
+require(dwapi)
+dwapi::configure(auth_token="eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJwcm9kLXVzZXItY2xpZW50Om5jYWxkdzAxIiwiaXNzIjoiYWdlbnQ6bmNhbGR3MDE6OjZmMzZiMjk2LTE0MWQtNGFlZS05NTg4LTUxMmQyYjY4YWMzOSIsImlhdCI6MTUwNTA4NDU5Nywicm9sZSI6WyJ1c2VyX2FwaV9yZWFkIiwidXNlcl9hcGlfd3JpdGUiXSwiZ2VuZXJhbC1wdXJwb3NlIjp0cnVlfQ.qNF8FTERO5DUMEV73y_5Gwbao0CTRXgm9C0zuOyZLroQqxuG-WB6E63XIvzoJHg0qdStWkF6oZpvRsxrV8vgKg")
+```
+
+## **Modeling average pledge, pt. 1**
+
+Link: https://data.world/isabelcachola/f-17-eda-project-3/insights/9671792a-9749-4a11-8a21-d8123dd9a505
+
+Being able to predict a new Kickstarter project's average pledge seems interesting. One can imagine sitting next to a new project's designer as they work at their computer, and plugging all of their project's information into a model that spits out what they could expect their average pledge to be. 
+
+This section attempts to predict average pledge based on its **category**. Category is a Kickstarter feature that describes whether a project is related to theatre, film, technology, etc. It seems possible that each category might have a distinct audience with different pledging habits. 
+
+Predicting by category was a preliminary experiment to get to know the data; really, we weren't expecting to see category make a very strong predictor.
+
+To get started, we added a column that would show a campaign's average pledge.
+```{r}
+project <- "https://data.world/isabelcachola/f-17-eda-project-3"
+df.n <- data.world::query(
+  data.world::qry_sql("SELECT * FROM kickstarter_data_with_features_2"),
+  dataset = project
+) %>% 
+  dplyr::mutate(avg_pledge = ifelse(backers_count==0, 0, pledged/backers_count))
+    # so we don't divide by 0
+```
+
+To tell whether category and average pledge were worth testing, we built a table to show average pledge by category. 
+
+```{r}
+avgs.n <- df.n %>%
+  dplyr::group_by(category) %>%
+  summarise(avg=mean(avg_pledge))
+avgs.n
+```
+
+From that table, it certainly looked like the theory holds water: depending on the category of project, one can expect to see a certain average pledge. So it was surprising to build a model only to have it yield several significant p-values combined with a ridiculously low adjusted R^2.
+
+```{r}
+summary(lm(avg_pledge~category, df.n))
+```
+
+According to those statistics, the model accounted for 0% of variance in the data, which must be some sort of record. It seemed that, while the >0.05 p-values suggested that at least some categories do a decent job of predicting a project's average pledge, the very low R^2 suggested that there was so much variance in pledge value that the trend was basically moot. Could outliers be confounding the data? To test that idea, we built a boxplot using ggplot:
+
+```{r}
+renderPlot(
+  ggplot(df.n, aes(x=category, y=avg_pledge)) + geom_boxplot()
+)
+```
+
+The boxplot makes clear that outliers are confounding the model of avg_pledge versus category. If we wanted to see whether category were a worthwhile predictor, there were a few ways to go forward:
+
+* **Use the *subcategory* column instead of *category*.** Tech is a pretty diverse field, so it makes sense that there would be a ton of outliers for that category. To help get rid of some of them, we could break it (and the other categories) down into its subcategories and use those instead of category as a predictor. **[Note: When we actually did this, we found the subcategories to be as full of outliers as the categories.]**
+* **Eliminate the rows that have the outlier average pledges.** Clearly, projects where somebody donated a ridiculous sum of money were confounding the relationship between average pledge and category. We could improve the model by removing them from the data. **[Note: We were reluctant to do this, because it would have involved substantially altering the data; clearly there were not merely a few outliers, but very many.]**
+* **Add more predictors to the model.** Part of the reason for the low R^2 may simply have been that a single predictor couldn't tell us much about what the average pledge for a project would be. **[Note: This was the path we pursued, as the next section will show; however, the idea that more predictors would raise the R^2 proved overly optimistic.]**
+
+## **Modeling average pledge, pt. 2**
+
+Link: https://data.world/isabelcachola/f-17-eda-project-3/insights/3d95b23d-248f-4f27-b376-2830ec99a5e9
+
+Pursuant to our decision to use multiple predictors to model a project's average pledge, we excluded all variables we thought might not have an effect or might confound the data.
+
+This left the following predictors:
+
+* **goal:** Could a more ambitious goal cause users to give more? Or could it cause them to doubt a project's prospects of success?
+* **disable_communication:** Could having the ability to talk to the project owner influence the amount given?
+* **staff_pick:** Could being featured by the site cause donors to give more?
+* **subcategory:** Could the subcategory of project (e.g. hardware, web--more specific than category) influence how much people give?
+* **name_len:** Could potential donors ignore certain projects based on name length?
+* **blurb_len:** Could donors give more money to projects they could read more about? Could overly-long blurbs alientate their readers?
+* **launch_to_deadline:** Could donors feel more urgency for an imminent deadline, and therefore give more?
+
+```{r}
+sdf.n = df.n %>%
+  dplyr::filter(currency=="USD") %>%
+  dplyr::select(
+    avg_pledge,
+    goal,
+    disable_communication,
+    staff_pick,
+    subcategory,
+    name_len,
+    blurb_len,
+    launch_to_deadline)
+```
+
+We decided to perform **forward stepwise selection** to find the best possible model to predict average pledge.
+
+```{r}
+# Making training data and model
+set.seed(5)
+train.n=sample(seq(14141),9900,replace=FALSE) # ~ 70% of data
+regfit.fwd.n=regsubsets(
+  avg_pledge~.,
+  data=sdf.n[train.n,],
+  nvmax=30,
+  method="forward")
+
+renderPlot(plot(regfit.fwd.n,scale="Cp"))
+```
+
+The chart told us this: while the best models varied in what predictors they used, some predictors were used consistently. Namely,
+
+* **goal**
+* **staff_picktrue**
+* **subcategorycameraequipment**
+* **subcategoryexperimental**
+* **subcategoryflight**
+* **subcategoryhardware**
+* **subcategorysound**
+* **subcategorywearables**
+* **name_len**
+
+However, that information was of questionable value, because when we checked the models' R^2 values, we were pretty disappointed:
+
+```{r}
+reg.summary.n=summary(regfit.fwd.n)
+renderPlot(plot(reg.summary.n$rsq,xlab="Number of Variables",ylab="rsq"))
+```
+
+No model's R^2 climbed very far above 5%, suggesting that none of them predicted avg_pledge with any reliability.
+
+To confirm that result, we evaluated the models using testing data.
+
+```{r}
+subset_qty = regfit.fwd.n$nvmax - 1
+val.errors.n=rep(NA,subset_qty)
+x.test.n=model.matrix(avg_pledge~.,data=sdf.n[-train.n,])
+
+for(i in 1:subset_qty){
+  coefi.n=coef(regfit.fwd.n,id=i)
+  pred.n=x.test.n[,names(coefi.n)]%*%coefi.n
+  val.errors.n[i]=mean((sdf.n$avg_pledge[-train.n]-pred.n)^2)
+}
+```
+
+To our shock, the RMSEs for our *training* set was far above that for our *testing* set. 
+
+Testing:
+
+```{r}
+sqrt(val.errors.n)
+```
+
+Training:
+```{r}
+sqrt(regfit.fwd.n$rss[-1]/180)
+```
+
+Clearly, something strange was going on. Wouldn't one expect the models to fit the training data very well? Machine learning is all about understanding what's known to make predictions for what's unknown--but here, our models seemed to understand the unknown better than the known. What could be going on?
+
+It's possible that our data's outliers were confounding our models. Although our training set had 9,900 observations and our testing set 4,241--normally far more than enough to avoid a situation where a handful of outliers severely influence the mean--we should bear in mind that *a great many* of those observations seem to have been quite extreme outliers. That is, there we many projects with average pledges far greater than the norm. 
+
+This suggests that adding predictors didn't actually counteract the outliers' effects on our initial model like we had hoped. *It remains difficult to model average pledge because we can't account for the existence of projects with huge outliers.*
+
+##**Modeling average pledge, conclusion**
+
+From our data's extreme outliers, and from our models' very low R^2 values, it seems likely that average pledge is determined less by the data we have and more by things like the page's aesthetics, the description's writing quality and ability to persuade, the name of the project, etc. For example, our data can tell us about the length of the project's description, but it can't tell us about the persuasiveness of the description.
+
+In talking about pledges, we're really talking about people making subjective judgments of a project's possibility of success. So even if things like category and staff-pick do factor into determining the average pledge, perhaps the greater part of the determination depends on how the donor responds to a particular project. That can be an emotional response to stimuli not reflected in our data, e.g. imagery; or it can be a rational response to stimuli also not reflected in our data, like the potential usefulness of the proposed product.
+
+Thus, even though our models were unable to successfully predict average pledge, their failure does tell us something interesting and important about the data. 

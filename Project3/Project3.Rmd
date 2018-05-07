@@ -1,0 +1,568 @@
+---
+title: "Project3"
+author: 'Group 10: Nathan Caldwell, Isabel Cachola, Edward Gunawan, Weiyi Wang'
+resource_files:
+- .Renviron
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+runtime: shiny
+---
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+require(data.world)
+knitr::opts_chunk$set(echo = TRUE)
+```
+  
+## **R Session Info**  
+
+```{r}
+sessionInfo()
+```
+
+## **Github Link** 
+https://github.com/isabelcachola/CS329
+
+## **Data.world Link**
+https://data.world/isabelcachola/f-17-eda-project-3/
+
+## Disclaimer
+Not all data.world insights are fully represented in this RMD document. Please view data.world for deeper analysis
+
+## Trend of Kickstarter support over time
+
+###Link:https://data.world/isabelcachola/f-17-eda-project-3/insights/17f27a77-754f-4871-8153-11c855f5a56e
+```{r}
+require(MASS)
+require(ISLR)
+require(tidyverse)
+require(dplyr)
+require(data.world)
+require(ggplot2)
+require(glmnet)
+require(leaps)
+require(boot)
+project<- "https://data.world/isabelcachola/f-17-eda-project-3"
+data.world::set_config(cfg_env("DW_API"))
+# data will take a while to read
+df_w <- data.world::query(
+  data.world::qry_sql("SELECT * FROM kickstarter_data_with_features_2"),
+  dataset = project
+)
+
+sdf_w = dplyr::select(df_w,country, created_at,backers_count,state)
+sdf_w = dplyr::filter(sdf_w,country=="US",state %in% c("failed","successful"),backers_count<50000)
+
+backersplot <- ggplot(sdf_w)+geom_point(aes(x=created_at,y=backers_count,color=state))
+renderPlot(plot(backersplot))
+
+glm.fit=glm(backers_count~created_at, data=sdf_w) # Create a linear model
+summary(glm.fit)
+
+```
+We see that the linear model predicts that there is an overall downwards trend over time of the number of backers. Let's perform cross validation to see whether there's another model we can try that may have different results.
+```{r}
+loocv=function(fit){
+  h=lm.influence(fit)$h
+  mean((residuals(fit)/(1-h))^2)
+}
+
+cv.error=rep(0,10)
+degree=1:10
+for(d in degree){
+  glm.fit=glm(backers_count~poly(created_at,d), data=sdf_w) #make a model for each degree
+  cv.error[d]=loocv(glm.fit) #Computes LOOCV error and puts it into error vector
+}
+plot(degree,cv.error,type="b")
+```
+
+```{r}
+cv.error10=rep(0,10)
+for(d in degree){
+  glm.fit=glm(backers_count~poly(created_at,d), data=sdf_w)
+  cv.error10[d]=cv.glm(sdf_w,glm.fit,K=10)$delta[1]
+}
+
+plot(degree,cv.error10,type="b",col="red")
+```
+
+These cross validations tell us that beyond a model of degree 5 there's not a whole lot of benefit from selecting a more complex model. A higher degree model could even run the risk of overfitting. Now let's produce this 5th degree model and see what future trend it predicts for the amount of backers over time
+```{r}
+
+new.glm.fit = glm(backers_count~poly(created_at,5),data=sdf_w)
+summary(new.glm.fit)
+```
+Based on the coefficients, this model also predicts that there is an overall downwards trend in the number of backers over time. 
+
+## Subset Selection of Predictors for Kickstarter Success Rate
+
+###Link:https://data.world/isabelcachola/f-17-eda-project-3/insights/ca2d7a97-86af-4f8d-b09c-d0a3c80cb69b
+I wanted to see if there were any good predictors of kickstarter success rate within the ACS census data, so I joined the data attained from kickstarter with various measures from the census data that I suspected might be correlated with the success rate of kickstarters. percent_college_degree,percent_above_150k_income,population_age_30to59,percent_divorced_male,percent_tech_business were the variables that I attained from the census data. Then I used ridge regression and shrinkage to try to determine which variables I should use in the model.
+```{r}
+df_w2 <- data.world::query(
+  data.world::qry_sql("SELECT * FROM Joined_Census"),
+  dataset = project
+)
+renderPlot(pairs(df_w2[,-1]))
+
+regfit.full_w=regsubsets(percent_success~.,data=df_w2[,c(-1,-2,-3)],nvmax=5)
+reg_w_summary=summary(regfit.full_w)
+reg_w_summary
+renderPlot(plot(reg_w_summary$cp,xlab="Number of Variables",ylab="Cp"))
+```
+Surprisingly, the subset selection shows that the best model consists of just a linear regression of success rate against percentage of divorced males within a state.
+
+## LDA Model prediction of Success
+
+###Link:https://data.world/isabelcachola/f-17-eda-project-3/insights/8c6d1766-c3fc-408c-81c6-d23226c17ce0
+I decided to perform ridge regression and lasso on the same five variables to see whether or not these model selection methods agree with the previous conclusion that percent of divorced males within a state's population is the best individual predictor for success of kickstarters.
+
+```{r}
+# Perform Ridge Regression
+df_w3 <- data.world::query(
+  data.world::qry_sql("SELECT * FROM Individual_KS_with_Census_Data"),
+  dataset = project
+)
+x=model.matrix(status~.-1,data = df_w3)
+x=x[,c("percent_divorced_male","percent_tech_business","population_age_30to59","percent_college_degree","percent_above_150k_income")]
+y=df_w3$status
+y=as.integer(as.logical(y))
+fit.ridge=glmnet(x,y,alpha=0)
+renderPlot(plot(fit.ridge,xvar="lambda",label=TRUE))
+
+```
+
+```{r}
+cv.ridge=cv.glmnet(x,y,alpha=0)
+renderPlot(plot(cv.ridge))
+# Perform Lasso Regression
+fit.lasso=glmnet(x,y)
+renderPlot(plot(fit.lasso,xvar="lambda",label=TRUE) )
+cv.lasso=cv.glmnet(x,y)
+renderPlot(plot(cv.lasso))
+coef(cv.lasso) 
+```
+The lasso also predicts that the percentage of divorced male is the best linear predictor of percent success. Let's use this variable to perform LDA.
+
+```{r}
+#Use LDA to make predictions using the model suggested by the regression.
+#Set training and testing data
+set.seed(1)
+train_ind <- sample(seq_len(nrow(df_w3)), size = 10000)
+
+training <- df_w3[train_ind, ]
+testing <- df_w3[-train_ind, ]
+
+# Use the perc_minority column from the testing data to make a lda model predicting whether a kickstarter succeeded or not
+divorced_lda = lda(status~percent_divorced_male,data = training)
+divorced_lda
+divorced_lda_pred = predict(divorced_lda,testing)
+table(divorced_lda_pred$class,testing$status)
+
+```
+The LDA predicts that kickstarters will fail 100% of the time. A look at the summary for divorced_lda quickly shows why. There is almost no difference in percent of divorced male in cases when the kickstarter succeeded versus when the kickstarter failed. And kickstarters failed 65% of the time, so the model had no reason to guess that any case would succeed.
+
+## Does Quantity of Kickstarters correlate with Success rate
+
+###Link:https://data.world/isabelcachola/f-17-eda-project-3/insights/4d8b020b-75c3-4803-b563-a2f56055a84f
+I wanted to see whether the quantity of kickstarters within a state correlates at all with the success rate of kickstarters within that state. First I used cross validation to determine what degree model to use.
+```{r}
+# fit some polynomials degrees 1-5
+cv.error_count=rep(0,5)
+degree=1:5
+for(d in degree){
+  glm.fit_count=glm(percent_success~poly(ct_by_state,d), data=df_w2) #make a model for each degree
+  cv.error_count[d]=loocv(glm.fit_count) #Computes LOOCV error and puts it into error vector
+}
+renderPlot(plot(degree,cv.error_count,type="b") )
+## 10-fold CV
+# divide data into 10 pieces. Use 9 for training 1 for testing. Then proceed same as LOOCV
+cv.error10_count=rep(0,5)
+for(d in degree){
+  glm.fit_count=glm(percent_success~poly(ct_by_state,d), data=df_w2)
+  cv.error10_count[d]=cv.glm(df_w2,glm.fit_count,K=10)$delta[1]
+}
+
+renderPlot(plot(degree,cv.error10_count,type="b",col="red"))
+cv.error_count
+cv.error10_count
+```
+Here I decide to use degree 2 for my model.
+```{r}
+count_lm_2 = lm(percent_success~poly(ct_by_state,2),data=df_w2)
+count_lm_2
+summary(count_lm_2)
+newdat = data.frame(ct_by_state = seq(min(df_w2$ct_by_state), max(df_w2$ct_by_state), length.out = 100))
+newdat$pred = predict(count_lm_2, newdata = newdat)
+renderPlot(plot(percent_success~ct_by_state,data = df_w2))
+renderPlot(with(newdat,lines(x=ct_by_state,y=pred)))
+```
+It appears that California had a large effect on the model, so I decided to remove it and reperform the cross validation and modeling.
+
+```{r}
+# Take out California and rerun the models and cross validation
+new_df_w2 = df_w2
+new_df_w2 = new_df_w2[new_df_w2[,1]!="CA",]
+
+count_lm_1 = lm(percent_success~poly(ct_by_state,1),data=new_df_w2)
+count_lm_1
+summary(count_lm_1)
+newdat = data.frame(ct_by_state = seq(min(new_df_w2$ct_by_state), max(new_df_w2$ct_by_state), length.out = 100))
+newdat$pred = predict(count_lm_1, newdata = newdat)
+renderPlot(plot(percent_success~ct_by_state,data = new_df_w2))
+renderPlot(with(newdat,lines(x=ct_by_state,y=pred)))
+
+# fit some polynomials degrees 1-5
+cv.error_count=rep(0,5)
+degree=1:5
+for(d in degree){
+  glm.fit_count=glm(percent_success~poly(ct_by_state,d), data=new_df_w2) #make a model for each degree
+  cv.error_count[d]=loocv(glm.fit_count) #Computes LOOCV error and puts it into error vector
+}
+renderPlot(plot(degree,cv.error_count,type="b") )
+## 10-fold CV
+# divide data into 10 pieces. Use 9 for training 1 for testing. Then proceed same as LOOCV
+cv.error10_count=rep(0,5)
+for(d in degree){
+  glm.fit_count=glm(percent_success~poly(ct_by_state,d), data=new_df_w2)
+  cv.error10_count[d]=cv.glm(new_df_w2,glm.fit_count,K=10)$delta[1]
+}
+
+renderPlot(plot(degree,cv.error10_count,type="b",col="red"))
+cv.error_count
+cv.error10_count
+
+
+```
+With California removed, the model of degree 1 actually becomes a better model
+
+```{r}
+new.glm.fit_count = glm(percent_success~poly(ct_by_state,1),data=df_w2)
+summary(new.glm.fit_count)
+```
+
+The model predicts that with this linear model, there is an increase in success rate of kickstarters in a state with an increase in the number of kickstarters within that state. This means if you are really serious about launching a successful kickstarter, it might be worthwhile to make the move to Texas, California, or another state that has more Kickstarter investment.
+
+## Day launched as a predictor of success
+
+Link:https://data.world/isabelcachola/f-17-eda-project-3/insights/b0626931-72d5-421d-a8ca-da2b10f80ae2
+I wanted to see if the day a Kickstarter was launched is a good predictor of success. First I restrict the data to Kickstarters in the US that are marked as either "failed" or "successful"
+
+First let's set up the data...
+```{r}
+require(MASS)
+require(ISLR)
+require(tidyverse)
+library(dplyr)
+
+project<- "https://data.world/isabelcachola/f-17-eda-project-3"
+df <- read.csv("https://query.data.world/s/0uetDd56RIiSaweOGdPqWuy2Idz44K", header=TRUE, stringsAsFactors=FALSE)
+
+sdf<- subset(df, country=='US')
+sdf<- subset(sdf, state=='successful'|state=='failed')
+
+set.seed(11)
+
+lda_func <-function(lda.fit){
+  print(lda.fit)
+  
+  lda.pred = predict(lda.fit, test)
+  df.pred = data.frame(lda.pred)
+  test$lda_class = lda.pred$class
+  print(ggplot(df.pred) + geom_histogram(mapping = aes(x=LD1)) + facet_wrap(~ class))
+  print(ggplot(df.pred) + geom_boxplot(mapping = aes(x=class, y=LD1)))
+  print(table(lda.pred$class,test$state))
+  print(paste('Percent correct:', toString(mean(lda.pred$class==test$state))))
+  print(paste('Percent incorrect:', toString(mean(lda.pred$class!=test$state))))
+  
+}
+sdf<- dplyr::mutate(sdf, day_launched=launched_at_weekday) 
+sdf$day_launched <- recode(sdf$day_launched, 
+                        "Sunday"=0,
+                        "Monday"=1,
+                        "Tuesday"=2,
+                        "Wednesday"=3,
+                        "Thursday"=4,
+                        "Friday"=5,
+                        "Saturday"=6)
+
+
+```
+
+Now let's look at the distribution of when Kickstarters are released:
+
+```{r}
+sdf$launched_at_weekday <- as.character(sdf$launched_at_weekday)
+sdf$launched_at_weekday <- factor(sdf$launched_at_weekday, levels=c('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'))
+renderPlot(ggplot(data=sdf, mapping=aes(sdf$launched_at_weekday)) + 
+  geom_bar(aes(fill=state)) + 
+  geom_text(stat='count',aes(label=..count..),vjust=-1))
+```
+
+Looking at the data, Monday and Tuesday are the most popular days to release Kickstarters while Saturday and Sunday are the least popular. It makes sense that Kickstarters are more likely to be released on weekdays. Based on the bar graph, it is not clear if launching a Kickstarter on a certain day makes it more likely to be successful, so let's run LDA and look at the results:
+
+```{r}
+train <- sdf[sample(nrow(sdf), 8421),] # 70% of the data to train
+test <- subset(sdf, !is.element(sdf$X, train$X))
+
+lda_func(lda(state~day_launched, data=train))
+lda.pred = data.frame(predict(lda(state~day_launched, data=train),test))
+table(lda.pred$class,test$state)
+paste('Percent correct:', toString(mean(lda.pred$class==test$state)))
+paste('Percent incorrect:', toString(mean(lda.pred$class!=test$state)))
+```
+
+It's clear that day launched is a poor predictor on its own. Let's look at why:
+
+```{r}
+test$posterior_successful = lda.pred$posterior.successful
+ggplot(data=test, mapping = aes(x=state,y=posterior_successful)) + geom_boxplot()
+test$posterior_failed = lda.pred$posterior.failed
+ggplot(data=test, mapping = aes(x=state,y=posterior_failed)) + geom_boxplot()
+```
+
+Looking at the box plots, there is no clear line between the probability of success and failure. This is why the model predicts all the Kickstarters as failed.
+
+Based on this model, we can draw the conclusion that the day of the week the Kickstarter was launched does not affect the success of the Kickerstarter.
+
+## Subset Selection to Predict net amount of goal reached
+
+###Link:https://data.world/isabelcachola/f-17-eda-project-3/insights/a4ecf2c9-dbee-48a9-91a8-249ea1fd11f3
+I wanted to see which features would best predict the net amount pledged (i.e. amount pledged - goal).
+
+First let's set up the data then run exhaustive subset selection:
+
+```{r}
+sdf_select <-dplyr::mutate(sdf, net_pledged = pledged-goal,
+                           percent_pledged = pledged/goal,
+                           diff_create_launch=as.numeric(as.Date(as.character(sdf$launched_at), format='%m/%d/%Y') - as.Date(as.character(sdf$created_at), format='%m/%d/%Y')))
+sdf_select <- dplyr::select(sdf_select, goal, backers_count, name_len, blurb_len,created_at_day,launched_at_day, net_pledged, diff_create_launch)
+
+library(leaps)
+regfit.full=regsubsets(net_pledged~.,data=sdf_select)
+reg.summary = summary(regfit.full)
+reg.summary
+renderPlot(plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp")+points(which.min(reg.summary$cp),reg.summary$cp[which.min(reg.summary$cp)],pch=20,col="red"))
+which.min(reg.summary$cp)
+renderPlot(plot(regfit.full,scale="Cp"))
+coef(regfit.full,which.min(reg.summary$cp))
+```
+
+Looking at the plot, we can see that a subset of 4 features yields the best results. These features are **goal, backers_count, name_len, and diff_create_launch**
+
+Goal and number of backers are used the most often. This makes sense because setting the right goal and having the exposure from backers would make the campaign more likely to be successful.
+
+Let's run a simple linear regression using these features to see how well it performs.
+
+```{r}
+lm.fit = lm(net_pledged~goal+backers_count+name_len+diff_create_launch, data = sdf_select)
+summary(lm.fit)
+```
+
+This regression has a very small p-value and an Adjusted R2 of 0.995, meaning that this model performs very well.
+
+## Distribution of the Percentage of Goal Reached
+
+###Link: https://data.world/isabelcachola/f-17-eda-project-3/insights/757f1298-d235-4351-8cf7-27b35037dadc
+ALthough this does not specifically involve modeling, I think that the distribution of the percentage of goal reached still gives interesting insight into how Kickstarters work. First let's set up the data:
+
+```{r}
+sdf_select <-dplyr::mutate(sdf, net_pledged = pledged-goal,
+                           percent_pledged = pledged/goal,
+                           diff_create_launch=as.numeric(as.Date(as.character(sdf$launched_at), format='%m/%d/%Y') - as.Date(as.character(sdf$created_at), format='%m/%d/%Y')))
+sdf_select <- dplyr::select(sdf_select, goal, backers_count, name_len, blurb_len,created_at_day,launched_at_day, net_pledged, diff_create_launch,percent_pledged)
+```
+
+Let's take a look at the histogram:
+```{r}
+renderPlot(ggplot(data=sdf_select, mapping = aes(percent_pledged)) + geom_histogram(bins = 50))
+
+```
+
+```{r}
+summary(sdf_select$percent_pledged)
+```
+
+The data has such ridiculous outliers that the histogram is not helpful at all in understanding its distribution. Looking at the summary, the **3rd Quartile is 1.10** but the **max is 22603.000**. So clearly there are a few ridiculously successful outliers. In fact the **variation is 53791.71**, which is also ridiculous.
+
+Let's try limiting it to less than the 3rd quartile:
+
+```{r}
+renderPlot(ggplot(data=dplyr::filter(sdf_select, percent_pledged <= 1.10), mapping = aes(percent_pledged)) + geom_histogram(bins=30))
+```
+
+It looks like the distribution could potentially be exponential up until around 90% then normal for 100% plus or minus 10%. First let's look at less than 90%:
+
+```{r}
+renderPlot(ggplot(data=dplyr::filter(sdf_select, percent_pledged <= .9&percent_pledged>0.1), mapping = aes(percent_pledged)) + geom_histogram(bins=100))
+```
+
+It looks like a large portion of Kickstarters receive close to nothing compared to their goal (sad). Let's limit the data to between 10% and 90% then fit it with an exponential curve.
+
+```{r}
+test <-subset(sdf_select$percent_pledged,sdf_select$percent_pledged <= .9&sdf_select$percent_pledged >= .1)
+counts <- hist(test, freq = FALSE, breaks = 100,prob=TRUE)$counts
+lambda <- 1/(mean(test))
+renderPlot(curve(lambda*exp(-lambda*x), col = "blue", add = TRUE))
+```
+
+The exponential curve does not perfectly fit the distribution but it's promising.
+
+Now let's look at 90% to 110%
+
+```{r}
+sdf1 <- dplyr::filter(sdf_select, percent_pledged <= 1.10&percent_pledged >= 0.9)
+var(sdf1$percent_pledged)
+ggplot(data=sdf1,mapping = aes(percent_pledged)) + geom_histogram(bins=30,colour="black", fill="white") + geom_density(alpha=.2, fill="#FF6666")
+```
+
+Although this range looked like it had the potential to be normal, when you zoom in, we can see that it is in fact not normal. The distribution seems to be largely centered at 100%. In fact, the variation of this portion of the data is 0.0009976505. Perhaps 100% to 110% can be exponential?
+
+```{r}
+sdf2 <- dplyr::filter(sdf_select, percent_pledged <= 1.10&percent_pledged >= 1)
+renderPlot(ggplot(data=sdf2,mapping = aes(percent_pledged)) + geom_histogram(bins=100,colour="black", fill="white") + geom_density(alpha=.2, fill="#FF6666"))
+```
+
+Again when you zoom in, the distribution looks less exponential. It appears that majority of Kickstarters who reach their goal reach almost exactly their goal.
+
+In conclusion:
+
+- A large proportion of Kickstarters earn close to nothing of their goal
+- Kickstarters between 10% and 90% are almost exponentially distributed
+- Kickstarters who land between 90% and 110% are largely centered att 100% (i.e. Kickstarters tend to reach their goal exactly
+- There are a few outliers that exceeded their goal by a lot, which throws off the over all distribution
+
+## K Selection Using Validation
+
+###Link: https://data.world/isabelcachola/f-17-eda-project-3/insights/41589cec-cac5-42b7-a098-82e7595011d7
+Using number of backers as a predictor of success or failure, I used Validation to select the optimal K for K-Nearest Neighboors
+
+```{r}
+set.seed(11)
+library(class)
+train <- sample(seq_len(nrow(sdf)), size = .7*nrow(sdf))
+val.percents=rep(NA,10)
+for(i in 1:10){
+  knn.pred = knn(cbind(sdf[train,]$backers_count),cbind(sdf[-train,]$backers_count),sdf[train,]$state,k=i)
+  val.percents[i]=mean(knn.pred==sdf[-train,]$state)
+}
+renderPlot(plot(val.percents,ylab="Percent Correct", pch=20,type="b"))
+which.max(val.percents)
+```
+
+According to validation, K=9 yields the highest percentage correct.
+
+Let's try it out:
+
+```{r}
+knn.pred = knn(cbind(sdf[train,]$backers_count),cbind(sdf[-train,]$backers_count),sdf[train,]$state,k=which.max(val.percents))
+mean(knn.pred==sdf[-train,]$state)
+```
+
+The model classifies the Kickstarters with an accuracy of about 83%, meaning this is a very good model. Let's look at the distribution of percent correct across K's:
+
+```{r}
+summary(val.percents)
+```
+
+The summary shows that the difference between the best K and worst K is only about 1% difference in accuracy, which is essentially negligible. In other words, choice of K is not very important in this model.
+
+Let's look at why number of backers is a good predictor of success:
+
+```{r}
+renderPlot(ggplot(data=sdf, mapping=aes(x=state, y=backers_count)) + geom_boxplot())
+```
+
+Because of the extreme outliers, looking at the boxplot does not help us visualize the data, so let's restrict it to the 1st and 3rd quartile:
+
+```{r}
+sdf1 <- dplyr::filter(sdf,backers_count > 14 & backers_count < 78)
+renderPlot(ggplot(data=sdf1, mapping=aes(x=state, y=backers_count)) + geom_boxplot())
+```
+
+Looking at the boxplot, the number of backs for successful campaigns tends to be 
+higher than failed campaigns, which makes sense.
+
+## Percentage of goal reached as a classification problem
+
+###Link:https://data.world/isabelcachola/f-17-eda-project-3/insights/abf237cd-8c64-46d7-972e-3de177db2dec
+After looking at the distribution of percentage of goal reached, I thought it would be more useful to treat it as a classification problem. So I divided the data into three subsets: between 0% and 50% of goal reached, 50% to 100% of goal reached, and 100% + of goal reached. First, let's set up the data:
+
+```{r}
+sdf_class <- dplyr::mutate(sdf, net_pledged = pledged-goal,
+                                percent_pledged = pledged/goal,
+                                diff_create_launch=as.numeric(as.Date(as.character(sdf$launched_at), format='%m/%d/%Y') - as.Date(as.character(sdf$created_at), format='%m/%d/%Y')))
+
+sdf_class <- dplyr::mutate(sdf_class, class_percent = ifelse(percent_pledged < .5, 'less than 50 percent',
+                                                             ifelse(percent_pledged >= .5 & percent_pledged < 1, '50 to 100 percent',
+                                                             'reached goal')))
+```
+
+Now let's split the data into a training and test set. I used a stratified sampling method to ensure that each class is represented in both the training and testing set:
+
+```{r}
+set.seed(5)
+library(splitstackshape)
+train <- stratified(sdf_class, c('class_percent'), size=.7)
+test <- subset(sdf_class, !is.element(sdf_class$X,train$X))
+```
+
+Now let's used QDA:
+
+```{r}
+qda.fit <- qda(class_percent~backers_count, data=train)
+qda.fit
+qda.pred = data.frame(predict(qda.fit, test))
+mean(qda.pred$class==test$class_percent)
+```
+
+
+The model predicts the correct class with an accuracy of about 75%, which significantly is better than classification by chance (33%). 
+
+Let's look at the distribution of backers by class. To make the plot more readable I excluded outliers over 5000.
+
+```{r}
+renderPlot(ggplot(data = subset(sdf_class,sdf_class$backers_count<5000), mapping=aes(x=class_percent,y=backers_count)) + geom_boxplot())
+```
+
+Looking at the boxplot, it's clear that successful Kickstarters has generally more backers than Kickstarters that lie in the 50% too 100% range, which have more backers than the 0% to 50% range.
+
+##Name length & Description Length (Resampling Method Bootstrap)
+
+###Link:https://data.world/isabelcachola/f-17-eda-project-3/insights/9f9aa78e-2443-4c82-b3ee-f47516b38d47
+
+
+We wanted to see if the Length of the Name and the Length of the description played a role into determining whether or not a campaign was successful or not.
+
+We used Validation, Cross Validation, and bootstrap to further look into the error:
+
+We started off by looking at the validation and the cross validation, and we got a cv.glm and a loocv equal to 0.293
+
+We than evaluate the cv.error or the leave one out validation method and plot the degree according to the cv.error. We ran the 10 fold cross validation method as well, overlaying the results on the same graph, and it showed that 
+
+It has very similar error rate according to the degree. Therefore we will choose a degree of 1 because 1 to 7 has virtually the same error rate and 1 is the least complex.
+
+In the summary we can see the Cv.error at a degree of 1 to be exactly 0.239
+
+Full details are found in the insight. 
+
+## Name length and Description Length (Resampling Method)
+
+###Link:https://data.world/isabelcachola/f-17-eda-project-3/insights/85dbd1da-2d88-46cd-92c1-64425a6cb6c0
+
+Boot Strap
+For the bootstrap method we are looking at the same variables: the success (whether or not the campaign reached its goal) along with the length of the blurb and the length of the name
+
+
+When running the statistic function with 3000 bootstraps. We get a std error for t1 of 0.045 which is the intercept and a std error of 0.00342 for t2 which is the coefficient and t3 of 0.00213 which is another coeffient.
+
+If we look at the summary, we can see that the standard errors are slightly different which indicates a slight bias.
+
+The next thing we will look at is using a quadratic statistic. The standard error of t1 is 0.00908 which corresponds to the intercept. The standard error for t2 and t3 is 0.48783 and 0.46734 which are coefficients respectively
+
+Further details are found in the insight.

@@ -1,0 +1,425 @@
+---
+title: "Nathan proj 4"
+resource_files:
+- .Renviron
+output:
+  html_notebook:
+    code_folding: hide
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(gbm)
+require(dwapi)
+require(tree)
+require(knitr)
+require(e1071)
+dwapi::configure(auth_token="eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJwcm9kLXVzZXItY2xpZW50Om5jYWxkdzAxIiwiaXNzIjoiYWdlbnQ6bmNhbGR3MDE6OjZmMzZiMjk2LTE0MWQtNGFlZS05NTg4LTUxMmQyYjY4YWMzOSIsImlhdCI6MTUwNTA4NDU5Nywicm9sZSI6WyJ1c2VyX2FwaV9yZWFkIiwidXNlcl9hcGlfd3JpdGUiXSwiZ2VuZXJhbC1wdXJwb3NlIjp0cnVlfQ.qNF8FTERO5DUMEV73y_5Gwbao0CTRXgm9C0zuOyZLroQqxuG-WB6E63XIvzoJHg0qdStWkF6oZpvRsxrV8vgKg")
+
+project = "https://data.world/wangweiyi722/f-17-eda-project-4/"
+query = paste("SELECT state, location_zip, lowest_grade, title_1_status, member, hisp, white FROM SchoolSurvey WHERE title_1_eligible = 'Yes' AND title_1_status != 'Missing'", sep="")
+df <- data.world::query(
+  data.world::qry_sql(query),
+  dataset = project
+) %>%
+  dplyr::filter(
+    lowest_grade!="NA/No Students Reported" & 
+      member>=0 &
+      hisp>=0 &
+      white>=0
+  ) %>%
+  dplyr::mutate(
+    region_code = location_zip %/% 10000,
+    has_program = ifelse(grepl(".*no program", title_1_status), "No", "Yes")
+  )
+```
+
+## **Do all eligible schools receive Title 1 funding?**
+
+Under the 2010 renewal of the Elementary and Secondary Education Act, do eligible schools always receive Title 1 funding? The answer is no. In the state of Texas, approx. 73% of eligible middle and high schools do not receive Title 1 funding, whereas 95% of eligible Texas elementary schools (here meaning schools that accept kids aged 10 or younger) do. By contrast, in California, 100% of eligible schools receive funding unobstructed. The natural inference is that state law determines whether a school receives Title 1 funding. 
+
+In the following sections of the RMD, I outline the developing understanding of the data that led me to that inference. I'll look especially at Texas data to try to suss out the contours of Texas law on Title 1. 
+
+## **Eligible schools, pt. 1**
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-4/insights/0ad9aa40-1c7c-4142-866b-d04db62de18b
+
+*In this insight, I had not yet realized that state law played a determining role; consequently, I looked at the data for all states included in the dataset. Moreover, I assumed that the schools themselves decided whether or not to accept Title 1 funding rather than following state law; therefore, my language reflects that assumption.*
+
+**Introduction**
+
+By filtering our dataset, I discovered that even if a school is eligible for Title 1 funding--i.e. they qualify for targeted assistance (TAS) or schoolwide programs (SWP)--the school will sometimes decline both options, preferring not to take any Title 1 funding.
+
+To use terms from our dataset, these are schools with both of the following:
+
+* `Title 1 Eligible` == "Yes"
+* `Title 1 Status` == "Eligible for TAS but provides no program" || Title 1 Status == "Eligible for SWP bur povides *[sic]* no program"
+
+I decided to use boosting trees to find the most important influences on a school's decision. I used a subset of variables that I thought might have an effect.
+
+My hypothesis was that the school's region, represented in `region_code`, would have a big influence: conservative states in the South might be more resistant to taking federal funding for education. Note that `region_code` works by taking the first digit of the school's zip code. You can see the effect in the map below:
+
+![](https://upload.wikimedia.org/wikipedia/commons/thumb/2/24/ZIP_Code_zones.svg/400px-ZIP_Code_zones.svg.png)
+
+
+**Boosting**
+
+The most influential variables in determining a school's decision are listed below.
+
+```{r}
+# Note: For some reason I had to put as.factor() around my categorical variables in order to get the boosting function to work with them.
+
+train=sample(1:nrow(df),46390) # 70% of data
+df_train=df[train,] %>% dplyr::filter(substr(state,1,1)<'N') # In order to avoid having `state` be a predictor with > 32 levels, which would break my tree operations
+
+boost.program=gbm(
+  as.factor(has_program)~
+    hisp+ # Number of Hispanics
+    white+ # Number of whites
+    as.factor(lowest_grade)+
+    region_code+ # Custom var: what part of the country the school is in
+    as.factor(state),
+  data=df_train,
+  distribution="gaussian",
+  n.trees=1000,
+  shrinkage=0.01,
+  interaction.depth=4)
+```
+
+```{r, include=FALSE}
+sum=summary(boost.program)
+```
+
+```{r}
+relinf=sum$rel.inf
+kable(data.frame(as.character(sum$var),relinf), format="markdown")
+```
+
+*Note: For this document, I didn't use all the variables I used for the [insight](https://data.world/wangweiyi722/f-17-eda-project-4/insights/0ad9aa40-1c7c-4142-866b-d04db62de18b), because I didn't want it to take forever to load. In the boosting table above, the top three variables are the same in the insight and here.*
+
+The results indicate that by far the most important variables were `lowest_grade` (the lowest grade offered, e.g. kindergarten or 9th grade), `state` (the state in which the school is located), and `white` (the number of white students at the school).
+
+**Interpretation**
+
+Those results were surprising and interesting. I discuss them more in the [insight](https://data.world/wangweiyi722/f-17-eda-project-4/insights/0ad9aa40-1c7c-4142-866b-d04db62de18b), but by far the most important result for my research was `state`. 
+
+The influence of `state` was my first clue as to the importance of state law. I was beginning to realize that state law determined whether eligible schools accepted or declined Title 1 funding--i.e., that schools weren't really the ones making the decision. 
+
+`Lowest_grade` and `white` seemed strange to me, like perhaps they were standing in for other, more relevant predictors. But in any case, they had proven more influential than those other predictors, so I decided to use them anyway. 
+
+It's important to note that the boosting table shows the *relative* influence of the variables, i.e. how influential they were relative to one another. In the next section, I built a model to determine whether they were actually any good at predicting whether an eligible school would or wouldn't receive funding.
+
+## **Eligible schools, pt. 2**
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-4/insights/75042a41-87b9-4115-a5a5-a33709eadc78
+
+**Introduction**
+
+I had realized that state law might determine whether a school received or didn't receive funding, so I came up with a new hypothesis:
+
+*Each school fits into some category under state law, and the category determines whether they accept or decline funding. That means that if we can understand what category the school fits into, we should be able to predict whether it accepts or declines.*
+
+To make the predictions, I took the three most important variables from last time--`lowest_grade`, `state`, and `white`--and put them in action in a decision tree. It's important to note that at this point I was still using data from all states rather than narrowing my focus to one state. 
+
+**Decision Tree**
+
+*Note: In this section, my numbers end up being slightly different than in the original [insight](https://data.world/wangweiyi722/f-17-eda-project-4/insights/75042a41-87b9-4115-a5a5-a33709eadc78). The reason is that for this RMD, I stopped using a bunch of predictors I didn't consider useful, and consequently I was able to pull a data frame with a much higher number of observations. Therefore, the training data set is far larger in terms of raw numbers in the RMD than in the insight.* 
+
+After creating the decision tree, I first evaluated its performance by looking at its rate of correct predictions. 
+
+```{r}
+tree1 <- tree(
+  as.factor(has_program)~
+    white+
+    as.factor(lowest_grade)+
+    as.factor(state), 
+  data = df_train)
+
+tree1.pred=predict(tree1,df_train,type="class")
+mean(tree1.pred==df_train$has_program)
+```
+
+Overall, the tree's rate of accurate prediction was in the high 80s--indicating a quite strong model. That seemed to suggest my hypothesis was right: we could predict a school's decision.
+
+Luckily, I had my wits about me, and I decided to look at a confusion matrix to confirm that the model performed well:
+
+```{r}
+with(df_train,table(tree1.pred,df_train$has_program))
+```
+
+In that table, the vertical margin is the school's actual acceptance/declination and the horizontal margin is the school's predicted acceptance/declination. 
+
+The confusion matrix tells us that the tree did very well at predicting true positives: it very seldom guessed that the school did take funding when in actuality the school didn't take funding. However, when the tree predicted that the school would decline the funding, it wrong approx. 30% of the time. That's not a very good record, despite the tree's low misclassification error overall. 
+
+So was our tree actually any good? To find out, I decided to test against a null hypothesis.
+
+**Testing Against Null**
+
+I calculated the ratio of Actual Yes to Actual No in the training set, and found it to be about 80%. That is, eligible schools accepted Title 1 funding approximately 80% of the time. 
+
+In that case, we might expect a successful classification rate of ~80% for a model that simply guessed Yes every time. To test this null hypothesis, I wrote some simple R code:
+
+```{r}
+df2 = df %>% dplyr::mutate(null="Yes")
+mean(df2$null==df2$has_program)
+```
+
+As expected, testing the null hypothesis showed that a model that simply predicted Yes every time would be correct about 80% of the time. That means our model, with its rate of successful prediction in the upper 80s, only improved on the null by a few percentage points.
+
+And even those few percentage points may not mean much. Remember that the null simply guessed Yes every time. It's reasonable, then, to think that our model only improved on the null because it occasionally guessed No. But the confusion matrix tells us that when our model did guess No, it was wrong around 30% of the time. That's better than 50-50, but it's still not very accurate predicting. 
+
+**Interpretation**
+
+Either the model or the variables were flawed. Could it be that `lowest_grade`, `state`, and `white` were simply bad predictors? In that case, it might be impossible to predict whether an eligible school would accept or decline Title 1 funding. 
+
+I decided a more likely explanation was that my model had failed because I had tried to make for all fifty states. If each state had its own laws governing whether an eligible school accepted or declined Title 1 funding, then the discrepancy between the states' laws would confound my model. I needed to narrow my focus to one state and see what I could come up with.
+
+## **Eligible schools, pt. 3**
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-4/insights/e20ef063-4b6d-4c84-811c-7cca3ac15fe7
+
+**Introduction**
+
+I had realized that because each state had its own rules for whether an eligible school should or should not receive Title 1 funding, it was a fool's errand to try to design one function for multiple states. 
+
+Consequently, I decided to narrow my focus to one state: Texas. This would eliminate the effect of multiple states having different laws governing whether an eligible school should accept or decline funding, enabling us to identify patterns in the data.
+
+**Boosting**
+
+To get started, I used boosting to confirm that the most influential variables nationally (i.e., `lowest_grade` and `white`, since we weren't including `state` anymore) were also the most influential variables in Texas.
+
+```{r}
+texas <- df %>% dplyr::filter(state=="Texas")
+boost.program=gbm(
+  as.factor(has_program)~
+    hisp+
+    white+
+    as.factor(lowest_grade),
+  data=texas,
+  distribution="gaussian",
+  n.trees=100,
+  shrinkage=0.1,
+  interaction.depth=4)
+
+renderPlot(summary(boost.program))
+```
+
+
+*Note: For this document, I didn't use all the variables I used for the [insight](https://data.world/wangweiyi722/f-17-eda-project-4/insights/e20ef063-4b6d-4c84-811c-7cca3ac15fe7), because I didn't want it to take forever to load. In the boosting table above, the top two variables are the same in the insight and here.*
+
+These results do suggest that the most influential variables in Texas, as in the nation, are `lowest_grade` and `white`. Notice that the dropoff between `white` and `hisp` is precipitous. So I decided to see how well `lowest_grade` and `white` might perform if we were to use them to predict eligible schools' rates of receiving Title 1 funding. We didn't need a model to get a sense of those predictors' usefulness; some simple visualization would suffice. 
+
+**Visualizing the Data**
+
+Since `state` was out of the picture, we finally had a two-dimensional dataset--and that meant we could finally do some visualization! 
+
+I made a simple plot to show the distribution of eligible schools that received and did not receive Title 1 funding. The green dots represent eligible schools that do not receive Title1 funding, while the blue dots represent eligible schools that do receive Title 1 funding. On the x axis, -1 represents pre-k, 0 represents kindergarten, 1 represents first grade, and so on.
+
+```{r}
+# In the code below, I changed `lowest_grade` and `has_program` (which is the output variable) to integer values. This made visualization simpler and also would enable the support vector machine I would make later on.
+texas = texas %>%
+  dplyr::select(white, lowest_grade, has_program) %>%
+  dplyr::mutate(
+    lg_int=ifelse( # lg_int represents the lowest grade offered. Kindergarten is 0.
+      grepl("\\d{2}.*", lowest_grade),
+      suppressWarnings(as.numeric(substr(lowest_grade,1,2))),
+      ifelse(
+        grepl("\\d.*", lowest_grade),
+        suppressWarnings(as.numeric(substr(lowest_grade,1,1))),
+        ifelse(
+          lowest_grade=="Kindergarten",
+          0,
+          -1
+        )
+      )
+    )
+  ) %>%
+  dplyr::mutate(hp_int=ifelse(has_program=="Yes",1,0)) # whether a school receives funding
+
+x.n=matrix(
+  cbind(texas$lg_int, texas$white),
+  ncol=2)
+
+renderPlot(plot(x.n,col=texas$hp_int+3,pch=19,xlab="Lowest Grade",ylab="White Students"))
+```
+
+
+There seemed to be a pretty clear difference in the distribution of colors in the chart: there were almost no green dots on the left side of the plot, which meant that eligible elementary schools (or at least schools that include elementary-aged children) tended to receive funding. Meanwhile, eligible middle schools and high schools tend to vary.
+
+I decided to calculate the rates of funding for eligible elementary schools vs. eligible middle and high schools.
+
+```{r}
+texas_middle_and_high <- dplyr::filter(texas,lg_int>=6)
+ct <- dplyr::count(
+  texas_middle_and_high,
+  texas_middle_and_high$hp_int==1)
+ct <- data.frame(ct$"texas_middle_and_high$hp_int == 1",ct$n)
+names(ct) <- c("receive_funding.MIDDLE_AND_HIGH_SCHOOLS", "count")
+kable(ct, format="markdown")
+```
+
+```{r}
+texas_elem <- dplyr::filter(texas,lg_int<6)
+ct <- dplyr::count(
+  texas_elem,
+  texas_elem$hp_int==1)
+ct <- data.frame(ct$"texas_elem$hp_int == 1",ct$n)
+names(ct) <- c("receive_funding.ELEMENTARY_SCHOOLS", "count")
+kable(ct, format="markdown")
+```
+
+With a little bit of calculation, we can use those numbers to figure out the following:
+
+* Texas middle schools and high schools that are eligible for Title 1 receive funding **73% of the time**.
+* Texas elementary schools that are eligible for Title 1 receive funding **95% of the time**.
+
+**Comparing Texas with California**
+
+In California, all eligible schools receive funding. 
+
+```{r}
+california = df %>%
+  dplyr::filter(state=="California") %>%
+  dplyr::select(white, lowest_grade, has_program) %>%
+  dplyr::mutate(
+    lg_int=ifelse( # lg_int represents the lowest grade offered. Kindergarten is 0.
+      grepl("\\d{2}.*", lowest_grade),
+      suppressWarnings(as.numeric(substr(lowest_grade,1,2))),
+      ifelse(
+        grepl("\\d.*", lowest_grade),
+        suppressWarnings(as.numeric(substr(lowest_grade,1,1))),
+        ifelse(
+          lowest_grade=="Kindergarten",
+          0,
+          -1
+        )
+      )
+    )
+  ) %>%
+  dplyr::mutate(hp_int=ifelse(has_program=="Yes",1,0)) # whether a school receives funding
+
+california_middle_and_high <- dplyr::filter(california,lg_int>=6)
+ct <- dplyr::count(
+  california_middle_and_high,
+  california_middle_and_high$hp_int==1)
+ct <- data.frame(ct$"california_middle_and_high$hp_int == 1",ct$n)
+names(ct) <- c("receive_funding.MIDDLE_AND_HIGH_SCHOOLS", "count")
+kable(ct, format="markdown")
+```
+Notice that there is only one row: that's because no eligible schools did not receive funding. 
+
+```{r}
+california_elem <- dplyr::filter(california,lg_int<6)
+ct <- dplyr::count(
+  california_elem,
+  california_elem$hp_int==1)
+ct <- data.frame(ct$"california_elem$hp_int == 1",ct$n)
+names(ct) <- c("receive_funding.ELEMENTARY_SCHOOLS", "count")
+kable(ct, format="markdown")
+```
+
+This tells us that Texas is different from other states, e.g. California. In Texas, the majority of eligible elementary schools and ~70% of eligible middle/high schools receive Title 1 funding; in California, 100% of all eligible schools receive it.
+
+**Interpretation**
+
+This was a major breakthrough. It seemed to say so much about my models, the data, and even things outside the data:
+
+* **It told us something about Texas law.** That huge difference between school types in Texas seemed to suggest that, in Texas, the law mandates that eligible elementary schools accept Title 1 funding, and perhaps establishes criteria for whether eligible middle and high schools should accept. By analyzing the data, we had learned about something that actually wasn't in the dataset!
+* **I would need to exclude elementary schools from my models going forward--at least for the state of Texas.** In Texas, elementary schools are always going to accept funding. That means that including those schools in my models could only weaken the models. As long as I was attempting to model data for Texas, I would need to exclude elementary schools going forward and just focus on middle and high schools.
+* **We confirmed that state law determines an eligible school's policy on Title 1 funding.** Since Texas differs from California, we know that the federal government doesn't set blanket policies for the states on Title 1 funding. That means we shouldn't try to build models for all 50 states at once.
+
+## **Eligible schools, pt. 4**
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-4/insights/c879cf27-aa0a-475d-ae8f-b2268b6b0920
+
+**Introduction**
+
+At this point, it's clear that state law does determine whether a state's eligible schools accepts Title 1 funding. Texas seems to have a policy whereby Title 1-eligible schools with young children receive Title 1 funding more often than Title 1-eligible middle schools and high schools. 
+
+Now that we know to look at states individually--and also to look at middle/high schools separately from elementary schools--we may be able to formulate some good models. What criteria determine whether an eligible middle/high school in Texas receives Title 1 funding? 
+
+**Hypothesizing**
+
+Perhaps race plays an unspoken role in the criteria for determining whether or not an eligible school gets funding, just as it plays an unspoken role in redistricting. A good hypothesis, then, might be that eligible middle and high schools with a higher proportion of white students tend to get funding more often than those with a higher proportion of Hispanic students. I decided to test that hypothesis using an SVM (support vector machine) applied to all the data for Texas middle and high schools.
+
+**Preliminary Visualization**
+
+To find out whether we should use a linear or non-linear (radial) SVM, let's chart our data and see whether there's a clear distinction between white and Hispanic schools.
+
+```{r}
+# Manipulating data to exclude elementary schools and facilitate modeling
+texas = df %>%
+  dplyr::filter(
+    state=="Texas",
+    lowest_grade=="6th Grade"|lowest_grade=="7th Grade"|lowest_grade=="8th Grade"|lowest_grade=="9th Grade"|lowest_grade=="10th Grade"|lowest_grade=="11th Grade"|lowest_grade=="12th Grade") %>%
+  dplyr::mutate(
+    perc_white=white/member,
+    perc_hisp=hisp/member,
+    hp_int=ifelse(has_program=="Yes",1,0))
+
+# Plotting percent white against percent Hispanic
+x=matrix(
+  cbind(texas$perc_white, texas$perc_hisp),
+  ncol=2)
+renderPlot(plot(x,col=texas$hp_int+3,pch=19,xlab="Percent White",ylab="Percent Hispanic"))
+```
+
+Wow, now that is an ungodly mess. The green dots represent eligible schools that decline Title1 funding, while the blue represent eligible schools that accept Title 1 funding. Since they're all on top of one another, we know a linear SVM would be inappropriate. 
+
+*Note: Omitted here is a use of cross-validation to find good tuning parameters for our SVM, viz. gamma and cost. You can refer to the [insight](https://data.world/wangweiyi722/f-17-eda-project-4/insights/c879cf27-aa0a-475d-ae8f-b2268b6b0920) for the code I used to perform the tuning. For this document, I used hard-coded values for gamma and cost in order to cut down the document's loadtime.* 
+```{r}
+# Radial SVM
+svmfit=svm(
+  has_program~texas$perc_white+texas$perc_hisp,
+  data=texas,
+  type="C",
+  kernel="radial",
+  cost=5,
+  gamma=5)
+
+# Displaying the results
+xdim1=seq(from=0,to=.5,by=.015) # .5 = 50% white
+xdim2=seq(from=0,to=.5,by=.015) # .5 = 50% Hispanic
+xgrid=expand.grid(X1=xdim1,X2=xdim2)
+ygrid=predict(svmfit,xgrid)
+renderPlot(plot(xgrid,col=as.numeric(ygrid)+1,pch=25,cex=.5,xlab="Percent White",ylab="Percent Hispanic"))
+```
+
+That figure reveals that our SVM model didn't do much good. It's also inherently error-prone, because if we allowed it to, it would make a prediction for a scenario where a school was 100% white and 100% Hispanic at the same time.
+
+If we work with the raw numbers of white students and Hispanic students at a school, rather than their proportion, we get a radial SVM that seems similarly useless:
+
+```{r}
+svmfit=svm(
+  has_program~texas$white+texas$hisp,
+  data=texas,
+  type="C",
+  kernel="radial",
+  cost=5,
+  gamma=5)
+
+xdim1=seq(from=0,to=1960,by=40)
+xdim2=seq(from=0,to=3050,by=65)
+xgrid=expand.grid(X1=xdim1,X2=xdim2)
+ygrid=predict(svmfit,xgrid)
+renderPlot(plot(xgrid,col=as.numeric(ygrid)+3,pch=25,cex=.5,xlab="White Students",ylab="Hispanic Students"))
+```
+
+**Interpretation**
+
+These results indicate either that SVM is simply inappropriate for this problem, or that Hispanic and white aren't very good predictors for determining whether eligible middle and high schools in Texas will or won't receive Title 1 funding. Being as I just thought of those predictors off the top of my head, I'm guessing the issue is that they're bad predictors.
+
+## **Eligible schools, conclusion**
+
+In the end, I didn't come up with a great model for whether an eligible school will accept Title 1 funding--but that doesn't mean that there isn't one. I do firmly believe that, after scaling the dataset down to the state of Texas and looking only at high schools and middle schools, it's entirely possible to find out what categories set forth in the state of Texas's policy.
+
+Here's what we learned:
+
+* Not all eligible schools end up receiving Title 1 funding.
+* State law determines whether an eligible school receives or does not receive Title 1 funding.
+* Each state has its own laws, so making a single model for all 50 states inappropriate. 

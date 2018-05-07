@@ -1,0 +1,118 @@
+---
+title: "FinalProject"
+author: "Weiyi"
+date: "November 26, 2017"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+runtime: shiny
+resource_files:
+- .Renviron
+---
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+require(tidyverse)
+require(data.world)
+require(dplyr)
+require(MASS)
+require(ISLR)
+require(tidyverse)
+require(data.world)
+require(ggplot2)
+require(glmnet)
+require(leaps)
+require(boot)
+knitr::opts_chunk$set(echo = TRUE)
+```
+  
+## **R Session Info**  
+
+```{r}
+sessionInfo()
+```
+
+## **Github Link** 
+https://github.com/isabelcachola/CS329
+
+## **Data.world Link**
+https://data.world/wangweiyi722/f-17-eda-project-5/
+
+## Disclaimer
+Not all data.world insights are fully represented in this RMD document. Please view data.world for deeper analysis
+
+##Link:https://data.world/wangweiyi722/f-17-eda-project-5/insights
+
+##Reading Data
+```{r}
+project<- "https://data.world/wangweiyi722/f-17-eda-project-5"
+data.world::set_config(cfg_env("DW_API"))
+# data will take a while to read
+fy13_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy13_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy13_school_budget_data  <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy13_school_budget_data"),
+  dataset = project
+)
+fy14_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy14_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy15_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy15_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy15_data_for_tableau  <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy15_data_for_tableau"),
+  dataset = project
+)
+fy16_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy16_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy16_school_budget_data  <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy16_school_budget_data"),
+  dataset = project
+)
+initial_allocation_rollup_map <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_allocation_rollup_map"),
+  dataset = project
+)
+initial_allocations_2_16_16 <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_allocations_2_16_16"),
+  dataset = project
+)
+initial_at_risk_allocations <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_at_risk_allocations"),
+  dataset = project
+)
+initial_budget_allocations <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_budget_allocations"),
+  dataset = project
+)
+fy_15_budget_by_line_item <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy15_data_for_tableau"),
+  dataset = project
+)
+```
+
+##Basic Data analysis
+
+```{r}
+fy13=dplyr::full_join(fy13_budgeted_student_enrollment_data,fy13_school_budget_data,by=c("school_code"="code","school_name"="school","fiscal_year","school_type","ward"))
+#fy14=dplyr::full_join(fy14_budgeted_student_enrollment_data,fy14_school_budget_data,by=c("school_code","school_name","fiscal_year","school_type","ward"))
+#fy15=dplyr::full_join(fy15_budgeted_student_enrollment_data,fy15_school_budget_data,by=c("school_code","school_name","fiscal_year","school_type","ward"))
+fy16=dplyr::full_join(fy16_budgeted_student_enrollment_data,fy16_school_budget_data,by=c("school_name","school_type","ward"))
+
+fy13_aggregate_budget=aggregate(fy13$amount,by=list(Category=fy13$budget_category),FUN=sum)
+fy16_aggregate_budget=aggregate(fy16$amount,by=list(Category=fy16$budget_allocation_category),FUN=sum)
+barplot(fy13_aggregate_budget$x,names.arg=fy13_aggregate_budget$Category,cex.names=.7,las=2,main="2013 Funding Distribution",ylab="Amount (USD)",xlab="Funding Category")
+barplot(fy16_aggregate_budget$x,names.arg=fy16_aggregate_budget$Category,cex.names=.7,las=2,main="2016 Funding Distribution",ylab="Amount (USD)",xlab="Funding Category")
+
+```

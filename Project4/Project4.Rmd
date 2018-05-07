@@ -1,0 +1,1391 @@
+---
+title: "Project4"
+author: 'Group 10: Nathan Caldwell, Isabel Cachola, Edward Gunawan, Weiyi Wang'
+resource_files:
+- Renviron
+- .Renviron
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+runtime: shiny
+---
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+require(data.world)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **R Session Info**
+
+```{r}
+sessionInfo()
+```
+
+## **Github Link**
+https://github.com/isabelcachola/CS329
+
+## **Data.world Link**
+https://data.world/isabelcachola/f-17-eda-project-4/
+
+## Decision Tree Predicting Title 1 Eligibility
+Creating a decision tree that attempts to predict whether or not a school is Title 1 eligible.
+```{r}
+#require(MASS)
+require(ISLR)
+require(tidyverse)
+require(dplyr)
+require(data.world)
+require(ggplot2)
+require(glmnet)
+require(leaps)
+require(boot)
+require(tree)
+project<- "https://data.world/wangweiyi722/f-17-eda-project-4"
+data.world::set_config(cfg_env("DW_API"))
+df_w <- data.world::query(
+  data.world::qry_sql("SELECT * FROM Title1EligibilityPredictors"),
+  dataset = project
+)
+
+attach(df_w)
+set.seed(1011)
+
+df_w_clean = df_w[title_1_eligible != "Missing",]
+df_w_clean = df_w_clean[complete.cases(df_w_clean),]
+eligibility = df_w_clean$title_1_eligible
+df_w_clean = data.frame(df_w_clean,eligibility)
+train=sample(1:nrow(df_w_clean),85000)
+tree.df_w=tree(eligibility~.-title_1_eligible,data=df_w_clean,subset=train)
+summary(tree.df_w)
+plot(tree.df_w)
+text(tree.df_w,pretty=0)
+tree.pred=predict(tree.df_w,df_w_clean[-train,],type="class")
+with(df_w_clean[-train,],table(tree.pred,eligibility))
+```
+## SVM Model of Title 1 eligibility
+Attempt to create a SVM that predicts title 1 eligibility based on the cultural diversity of the school and the student teacher ratio.
+
+```{r}
+df_svm <- data.world::query(
+  data.world::qry_sql("SELECT * FROM Racial_Spread_and_S_T_Ratio"),
+  dataset = project
+)
+df_svm_clean = df_svm[df_svm$diversity_index>=0 & df_svm$american_indian+df_svm$asian+df_svm$hispanic+df_svm$black+df_svm$white+df_svm$pacific+df_svm$mixed_race>0 & df_svm$student_teacher_ratio<32,]
+
+plot(df_svm_clean$diversity_index,df_svm_clean$student_teacher_ratio, col = ifelse(df_svm_clean$title_1_eligible=='Yes',"Blue","Red"),main = "Scatterplot of Student Teacher Ratio vs Diversity Index",xlab = "Diversity Index", ylab = "Student Teacher Ratio",pch = 16, cex = .1)
+```
+From the scatterplot, There appears to be no distinct pattern of whether the school is eligible for title 1 or not based on these two predictors. Let's see what a generated svm model says.
+
+```{r}
+library(e1071)
+set.seed(1996)
+svm_dat=data.frame(df_svm_clean$student_teacher_ratio,df_svm_clean$diversity_index,y=as.factor(df_svm_clean$title_1_eligible))
+svm_dat=svm_dat[svm_dat$y!="Missing",]
+svm_dat = svm_dat[sample(nrow(svm_dat),100),] # get a random sample of 100, svm() takes too long if used with full data set
+svm_fit=svm(svm_dat$y~.,data=svm_dat,kernel="radial",cost=30,scale=FALSE)
+print(svm_fit)
+plot(svm_fit,svm_dat)
+```
+
+```{r}
+make.grid=function(x,n=75){
+  grange=apply(x,2,range)
+  x1=seq(from=as.double(grange[1,1]),to=as.double(grange[2,1]),length=n)
+  x2=seq(from=as.double(grange[1,2]),to=as.double(grange[2,2]),length=n)
+  expand.grid(X1=x1,X2=x2)
+}
+xgrid=make.grid(data.frame(svm_dat$df_svm_clean.student_teacher_ratio,svm_dat$df_svm_clean.diversity_index))
+colnames(xgrid)[1]="df_svm_clean.student_teacher_ratio"
+colnames(xgrid)[2]="df_svm_clean.diversity_index"
+ygrid=predict(svm_fit,xgrid)
+plot(xgrid,col=c("red","blue","red")[as.numeric(ygrid)],pch=20,cex=.2,main = "Svm of Student Teacher Ratio vs Diversity Index",ylab = "Diversity Index", xlab = "Student Teacher Ratio")
+points(svm_dat,col=ifelse(as.numeric(svm_dat$y)==3,"red","blue"),pch=19)
+points(svm_dat[svm_fit$index,],pch=5,cex=1.5)
+
+```
+
+
+## Random Forest of Title 1 Eligibility
+Applying random forest to the decision tree model to find the best possible model for Title 1 eligibility based on the .
+
+```{r}
+require(randomForest)
+df_w_complete <- data.world::query(
+  data.world::qry_sql("SELECT type,status,urban_locale,title_1_eligible,full_time_teachers, member/full_time_teachers as student_teacher_ratio,total_lunch/member as percent_lunch_program,am/member as percent_american_indian,asian/member as percent_asian,hisp/member as percent_hispanic,black/member as percent_black,white/member as percent_white, pacific/member as percent_pacific_islander,tr/member as percent_mixed FROM SchoolSurvey WHERE member>0 AND full_time_teachers>0 and total_lunch/member>0 AND title_1_eligible!='Missing'"),
+  dataset = project
+)
+df_w_complete = df_w_complete[complete.cases(df_w_complete),]
+attach(df_w_complete)
+set.seed(1996)
+# cull the data because r has trouble handling 100k rows of data with the pairs function
+df_w_sample = df_w_complete[sample(nrow(df_w_complete),5000),]
+df_w_train = sample(1:nrow(df_w_complete),5000)
+
+pairs(df_w_sample[,5:14])
+oob.err=double(10)
+test.err=double(10)
+numeric_df_w = data.frame(ifelse(title_1_eligible=="Yes",1,0),full_time_teachers,student_teacher_ratio,percent_lunch_program,percent_american_indian,percent_asian,percent_black,percent_hispanic,percent_white,percent_pacific_islander,percent_mixed)
+colnames(numeric_df_w)[1]="title_1_eligible"
+
+for(mtry in 1:10){
+  school.fit=randomForest(title_1_eligible~.,data=numeric_df_w,subset=df_w_train,mtry=mtry,ntree=100)
+  oob.err[mtry]=school.fit$mse[100]
+  school.pred=predict(school.fit,numeric_df_w[-train,])
+  test.err[mtry]=with(numeric_df_w[-train,],mean((title_1_eligible-school.pred)^2))
+  #cat(mtry," ")
+}
+matplot(1:mtry,cbind(test.err,oob.err),pch=19,col=c("red","blue"),type="b",ylab="Mean Squared Error")#+legend("right",legend=c("Test","OOB"),pch=19,col=c("red","blue"))
+
+# Based on the error plots, I decided to create the model using mtry = 2
+school.fit=randomForest(title_1_eligible~.,data=numeric_df_w,subset=df_w_train,mtry=2,ntree=100)
+school.pred=predict(school.fit,numeric_df_w[-df_w_train,])
+table(round(school.pred),numeric_df_w[-df_w_train,]$title_1_eligible)
+(13844+37383)/(13844+26564+6229+37383)
+```
+
+## Clustering of school type based on the student teacher ratio and diversity index
+
+Here I use k-means clustering to see if any clear clusters of data can be formed for the schools based on student teacher ratio and diversity index.
+```{r}
+set.seed(1996)
+df_cluster = df_w_complete
+df_cluster = df_cluster[complete.cases(df_cluster),]
+df_cluster = df_cluster[student_teacher_ratio<1500,]
+df_cluster = df_cluster[df_cluster$type != "Regular School",]
+school_type = df_cluster$type
+df_school_type = data.frame(school_type)
+colnames(df_school_type)[1]="School_Type"
+div_ind = 1-df_cluster$percent_american_indian^2-df_cluster$percent_asian^2-df_cluster$percent_hispanic^2-df_cluster$percent_black^2-df_cluster$percent_white^2-df_cluster$percent_pacific_islander^2-df_cluster$percent_mixed^2
+df_cluster = data.frame(df_cluster$student_teacher_ratio,div_ind)
+
+plot(df_cluster,col=as.factor(school_type),pch=16,cex=.5,main="Scatterplot of Student Teacher Ratio and Diversity Index",ylab="Diversity_index",xlab="Student Teacher Ratio")#+legend("topright",legend=c("Other/Alternative","Special Ed","Vocational","Reportable Program"),pch=19,col=c("black","red","green","blue"))
+
+
+
+```
+
+```{r}
+color_eq = data.frame(c("Special education School","Vocational School","Other/alternative School","Reportable Program"),c(2,1,4,3))
+colnames(color_eq)[1]="School_Type"
+colnames(color_eq)[2]="Color"
+merged_colors = merge(df_school_type,color_eq,by = "School_Type",all= TRUE)
+km.schools=kmeans(df_cluster,4,nstart=15)
+km.schools
+plot(df_cluster,col=km.schools$cluster,cex=2,pch=1,lwd=2,main="Scatterplot of Student Teacher Ratio and Diversity Index",ylab="Diversity Index",xlab="Student Teacher Ratio")
+points(df_cluster,col=merged_colors$Color,pch=16,cex=.5)
+```
+
+This model results in this confusion matrix, showing that the cluster seems to overpredict the 4th cluster
+```{r}
+table(km.schools$cluster,merged_colors$Color[2:4578])
+```
+
+## **Title I Eligibility by Location**{.tabset .tabset-fade}
+
+### Intro
+
+Setting up data...
+```{r}
+#require(MASS)
+require(ISLR)
+require(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(maps)
+library(mapdata)
+
+project<- "https://data.world/wangweiyi722/f-17-eda-project-4"
+df_orig <- read.csv("https://query.data.world/s/HA6-o2FHiIAxnVdNwfiukSb4hFek3R", header = TRUE, stringsAsFactors = FALSE)
+
+colnames(df_orig)[1] <- "State"
+colnames(df_orig)[2] <- "Location.City"
+colnames(df_orig)[4] <- "Full.Time.Teachers"
+colnames(df_orig)[8] <- "Total.Lunch"
+colnames(df_orig)[9] <- "Longitude"
+colnames(df_orig)[10] <- "Latitude"
+colnames(df_orig)[11] <-"Title.1.Eligible"
+
+df_map = subset(df_orig, (df_orig$Title.1.Eligible == "Yes")|(df_orig$Title.1.Eligible == "No"))
+df_map <- dplyr::mutate(df_map, factored_stats = factor(df_map$Title.1.Eligible, levels = c("Yes","No")))
+```
+
+**United States Mainland**
+```{r}
+states <- map_data("state")
+usa <- map_data("usa")
+us_base <- ggplot(data = states) +
+  geom_polygon(aes(x = long, y = lat, group = group), color = "white") +
+  coord_fixed(1.3)
+
+df_map_main_us <- filter(df_map, (df_map$State != "Bureau of Indian Education")&(df_map$State != "Northern Marianas")&(df_map$State != "Puerto Rico")&(df_map$State != "Alaska")&(df_map$State != "Hawaii"))
+
+df_map_main_us$State <- tolower(df_map_main_us$State)
+
+state_eligibilty_perc <-data.frame(state = unique(df_map_main_us$State), perc = rep(0,47))
+for (i in 1:47){
+  state <- state_eligibilty_perc[i,]$state
+  num_el <- nrow(subset(df_map_main_us, (df_map_main_us$State==state)&(df_map_main_us$Title.1.Eligible=="Yes")))
+  total <- nrow(subset(df_map_main_us, (df_map_main_us$State==state)))
+  percent <- num_el/total
+  state_eligibilty_perc[i,]$perc <- percent
+}
+state_eligibilty_perc <- mutate(state_eligibilty_perc, region = state)
+el_perc <- inner_join(state_eligibilty_perc, states, by = "region")
+
+ditch_the_axes <- theme(
+  axis.text = element_blank(),
+  axis.line = element_blank(),
+  axis.ticks = element_blank(),
+  panel.border = element_blank(),
+  panel.grid = element_blank(),
+  axis.title = element_blank()
+)
+
+ggplot(data = el_perc) +
+  geom_polygon(aes(x = long, y = lat, group = group, fill=perc), color = "white") +
+  ggtitle("Percentage of Title I Eligibility") +
+  theme_bw() +
+  ditch_the_axes +
+  scale_fill_gradientn(colours = rev(terrain.colors(7)),
+                       breaks = c(.14, .28, .42, .56, .70, .84, 1))
+
+el_perc[which.min(el_perc$perc),]$state
+el_perc[which.max(el_perc$perc),]$state
+```
+The map shows the percentage of schools that are Title I eligible for each state. Note that Nevada and Georgia have no data. According to the map, New York has the highest percentage of schools that are Title I eligible and Maryland has the lowest.
+
+**Texas**
+```{r}
+df_map_texas = subset(df_map, df_map$State == "Texas")
+
+states <- map_data("state")
+tx_df <- subset(states, region == "texas")
+tx_base <- ggplot(data = tx_df, mapping = aes(x = long, y = lat)) +
+  coord_fixed(1.3) +
+  geom_polygon(color = "black", fill = "black")
+
+df_map_texas_eligible <- dplyr:: filter(df_map_texas, df_map_texas$Title.1.Eligible=="Yes")
+df_map_texas_not_eligible <- subset(df_map_texas, df_map_texas$Title.1.Eligible=="No")
+
+tx_base +
+  geom_point(data = df_map_texas_eligible, mapping = aes(x=Longitude,y=Latitude,colour='Title I Eligible')) +
+  geom_point(data = df_map_texas_not_eligible,mapping = aes(x=Longitude,y=Latitude,colour='Not Title I Eligible')) +
+  geom_point(mapping = aes(x=-97.743061,y=30.267153,colour = 'Major Cities'),size = 5,shape = 18)+
+  geom_point(mapping = aes(x=-96.796988,y=32.776664,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-95.369803,y=29.760427,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-98.493628,y=29.424122,colour = 'Major Cities'),size = 5,shape=18) +
+  scale_color_brewer(palette="PRGn") +
+  ditch_the_axes
+```
+
+**California**
+```{r}
+df_map_ca = subset(df_map, df_map$State == "California")
+
+states <- map_data("state")
+ca_df <- subset(states, region == "california")
+ca_base <- ggplot(data = ca_df, mapping = aes(x = long, y = lat)) +
+  coord_fixed(1.3) +
+  geom_polygon(color = "black", fill = "black")
+
+df_map_ca_eligible <- dplyr:: filter(df_map_ca, df_map_ca$Title.1.Eligible=="Yes")
+df_map_ca_not_eligible <- subset(df_map_ca, df_map_ca$Title.1.Eligible=="No")
+
+ca_base +
+  geom_point(data = df_map_ca_eligible, mapping = aes(x=Longitude,y=Latitude,colour='Title I Eligible')) +
+  geom_point(data = df_map_ca_not_eligible,mapping = aes(x=Longitude,y=Latitude,colour='Not Title I Eligible')) +
+  geom_point(mapping = aes(x=-122.419416,y=37.774929,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-117.161084,y=32.715738,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-118.243685,y=34.052234,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-121.886329,y=37.338208,colour = 'Major Cities'),size = 5,shape=18) +
+  geom_point(mapping = aes(x=-121.494400,y=38.581572,colour = 'Major Cities'),size = 5,shape=18) +
+  ditch_the_axes +
+  scale_color_brewer(palette="PRGn")
+```
+
+**New York**
+```{r}
+df_map_ny = subset(df_map, df_map$State == "New York")
+
+ny_df <- subset(states, region == "new york")
+ny_base <- ggplot(data = ny_df, mapping = aes(x = long, y = lat)) +
+  coord_fixed(1.3) +
+  geom_polygon(color = "black", fill = "black")
+
+df_map_ny_eligible <- dplyr:: filter(df_map_ny, df_map_ny$Title.1.Eligible=="Yes")
+df_map_ny_not_eligible <- subset(df_map_ny, df_map_ny$Title.1.Eligible=="No")
+
+ny_base +
+  geom_point(data = df_map_ny_eligible, mapping = aes(x=Longitude,y=Latitude,colour='Title I Eligible')) +
+  geom_point(data = df_map_ny_not_eligible,mapping = aes(x=Longitude,y=Latitude,colour='Not Title I Eligible')) +
+  geom_point(mapping = aes(x=-74.005973,y=40.712775,colour = 'Major Cities'),size = 5,shape=18) +
+  ditch_the_axes +
+  scale_color_brewer(palette="PRGn")
+```
+
+**Looking at all the plots for the charts, it's clear that Title I eligilble schools tend to be centered around big cities**
+This should make intuitive sense because high paying jobs tend to be located in cities, rather than in rural areas.
+
+### Austin
+About 62 % of Austin schools are T1 eligible, so if we create a model that predicts all schools to be Title I eligible, we would have an error rate of about 38%. We will use this as our baseline.
+
+**Linear Basis SVM**
+
+Using a linear basis SVM, we can attempt to predict Title I eligibility by location in Austin.
+Using 10-fold Cross Validation, we tune for the optimal parameters then run a SVM.
+
+```{r}
+library(e1071)
+set.seed(11)
+df_svm = filter(df_orig, (Title.1.Eligible == "Yes")|(Title.1.Eligible == "No")) %>%
+         filter(Location.City == 'AUSTIN' & Longitude < -95 & Latitude < 35) %>%
+         dplyr::select(Longitude, Latitude, Title.1.Eligible) %>%
+         mutate(Longitude_Scaled = Longitude/3)
+df_svm$Latitude <- as.numeric(df_svm$Latitude)
+df_svm$Longitude <- as.numeric(df_svm$Longitude)
+df_svm$Title.1.Eligible <- as.factor(df_svm$Title.1.Eligible)
+
+ggplot(data = df_svm, mapping = aes(x=Longitude_Scaled,y=Latitude,colour=Title.1.Eligible)) + geom_point()
+
+# Linear SVM
+tuned = tune.svm(Title.1.Eligible~Longitude_Scaled+Latitude, data = df_svm,
+                 kernel = "linear",
+                 cost = 1:10,
+                 tunecontrol=tune.control(cross=10))
+
+best_cost <- tuned$best.model$cost
+
+svmfit=svm(Title.1.Eligible~Longitude_Scaled+Latitude,data=df_svm,type="C",kernel="linear",cost=best_cost)
+print(svmfit)
+
+make.grid=function(x,n=100){
+  grange=apply(x,2,range)
+  x1=seq(-32.67,-32.52,length=n)
+  x2=seq(30.12,30.55,length=n)
+  expand.grid(X1=x1,X2=x2)
+}
+
+x= cbind(df_svm$Longitude_Scaled,df_svm$Latitude)
+y =df_svm$Title.1.Eligible
+col_func <- function(x){  ifelse(x=="Yes","blue","red") }
+col <-col_func(y)
+xgrid=make.grid(x)
+colnames(xgrid)[1] = "Longitude_Scaled"
+colnames(xgrid)[2] = "Latitude"
+ygrid=predict(svmfit,xgrid)
+plot(xgrid,col=c("red","blue")[as.numeric(ygrid)],pch=20,cex=.2)
+points(x,col=col,pch=19)
+
+tuned$best.performance
+```
+
+Looking at the plot, we can see that the model picks up the fact the schools in East Austin are more likely to be Title 1 eligible.
+
+**Radial Basis SVM**
+
+Now we try Radial Basis SVM. Again we perform 10-fold CV to tune the parameters.
+
+```{r}
+library(ggmap)
+tuned = tune.svm(Title.1.Eligible~Longitude_Scaled+Latitude, data = df_svm,
+                 cost = 1:10,
+                 gamma = 1:10,
+                 kernel = "radial",
+                 tunecontrol=tune.control(cross=10))
+best_gamma <- tuned$best.model$gamma
+best_cost <- tuned$best.model$cost
+
+svmfit=svm(Title.1.Eligible~Longitude_Scaled+Latitude,data=df_svm,type="C",kernel="radial",cost=best_cost,gamma=best_gamma)
+
+print(svmfit)
+
+make.grid=function(x,n=100){
+  grange=apply(x,2,range)
+  x1=seq(-32.67,-32.52,length=n)
+  x2=seq(30.12,30.55,length=n)
+  expand.grid(X1=x1,X2=x2)
+}
+
+x= cbind(df_svm$Longitude_Scaled,df_svm$Latitude)
+y =df_svm$Title.1.Eligible
+col_func <- function(x){  ifelse(x=="Yes","blue","red") }
+col <-col_func(y)
+xgrid=make.grid(x)
+colnames(xgrid)[1] = "Longitude_Scaled"
+colnames(xgrid)[2] = "Latitude"
+ygrid=predict(svmfit,xgrid)
+plot(xgrid,col=c("red","blue")[as.numeric(ygrid)],pch=20,cex=.2)
+points(x,col=col,pch=19)
+
+tuned$best.performance
+```
+
+Looking at the error rates, it's clear that *radial basis SVM performs better*. In fact, we can lay the points over a map to see more specifically where the T1 schools lie.
+
+```{r}
+lat <- as.numeric(df_svm$Latitude)
+lon <- as.numeric(df_svm$Longitude_Scaled*3)
+T1 <- as.factor(df_svm$Title.1.Eligible)
+df_austin <- data.frame(lat,lon,T1)
+
+austin <- get_googlemap(center= c(lon = -97.743061, lat = 30.267153), maptype = "roadmap",zoom = 11)
+
+df_austin$Longitude_Scaled <- df_svm$Longitude_Scaled
+df_austin$Latitude <- df_svm$Latitude
+test <- df_austin
+test$pred <- predict(svmfit, df_austin)
+
+ggmap(austin) +
+  geom_point(data = test, mapping = aes(x=lon,y=lat,colour = pred, shape = T1),size = 3) +
+  ditch_the_axes +
+  labs(title = "Radial Basis SVM Predictions")
+```
+
+**Perc. of White Students vs Perc. of Free/Reduced Lunch**
+
+We will be looking at how the percentage of white students vs. the percentage of student eligible for free/reduced lunch in Austin. First let's look at the distribution:
+
+```{r}
+set.seed(11)
+df4 <- filter(df_orig, Title.1.Eligible == "Yes"|Title.1.Eligible == "No") %>%
+                     filter(Location.City=="AUSTIN") %>%
+                     mutate(stratio = Full.Time.Teachers / member,
+                            perc_white = white / member,
+                            perc_lunch = Total.Lunch / member)
+
+ggplot(data = df4, mapping = aes(x=perc_white,y=perc_lunch,colour=Title.1.Eligible)) +
+  geom_point() + xlab("Percentage of White Students") + ylab("Percentage of Students Qualified for Free/Reduced Lunch") +
+  ggtitle("Schools in Austin")
+```
+
+It looks like there is a cluster in the bottom right and the top left.
+
+**SVM**
+First let's try a supervised approach, testing for Title I eligibility.
+
+```{r}
+# SVM
+y<-df4$Title.1.Eligible <- as.factor(df4$Title.1.Eligible)
+x<- cbind(df4$perc_white,df4$perc_lunch)
+tuned = tune.svm(y~x, data = df4,
+                 cost = 1:10,
+                 gamma = 1:10,
+                 kernel = "radial",
+                 tunecontrol=tune.control(cross=10))
+best_gamma <- tuned$best.model$gamma
+best_cost <- tuned$best.model$cost
+
+svmfit=svm(Title.1.Eligible~perc_white+perc_lunch,data=df4,type="C",kernel="radial",cost=best_cost,gamma=best_gamma)
+
+print(svmfit)
+
+make.grid=function(x,n=100){
+  grange=apply(x,2,range)
+  x1=seq(0,1,length=n)
+  x2=seq(0,1,length=n)
+  expand.grid(X1=x1,X2=x2)
+}
+
+col_func <- function(x){  ifelse(x=="Yes","blue","red") }
+col <-col_func(y)
+xgrid=make.grid(x)
+colnames(xgrid)[1] = "perc_white"
+colnames(xgrid)[2] = "perc_lunch"
+ygrid=predict(svmfit,xgrid)
+plot(xgrid,col=c("red","blue")[as.numeric(ygrid)],
+     pch=20,cex=.2,
+     xlab = "Percentage of White Students",
+     ylab = "Percentage of Students Qualified for Free/Reduced Lunch",
+     main = "Radial Basis SVM")
+points(x,col=col,pch=19)
+tuned$best.performance
+```
+
+**K-means Clustering**
+Now let's look at an unsupervised approach.
+```{r}
+col_func <- function(x){  ifelse(x=="Yes","blue","red") }
+x <- cbind(df4$perc_white,df4$perc_lunch)
+col <- col_func(df4$Title.1.Eligible)
+
+km.out=kmeans(x,2)
+km.out
+km.out$cluster
+
+cluster_col_func <- function(x){ifelse(x=="1",'orange','green')}
+cluster_col <- cluster_col_func(km.out$cluster)
+clust_pred_function <- function(x){ifelse(x=="2","No","Yes")}
+clust_pred <- clust_pred_function(km.out$cluster)
+
+plot(x,col=cluster_col,cex=2,pch=1,lwd=2,
+     xlab = "Percentage of White Students",
+     ylab = "Percentage of Students Qualified for Free/Reduced Lunch",
+     main = "Clustering")
+points(x,col=col,pch=19)
+text(.95,.95,labels = paste("Error =",toString(mean(clust_pred != df4$Title.1.Eligible))))
+
+table(clust_pred, df4$Title.1.Eligible)
+mean(clust_pred != df4$Title.1.Eligible)
+```
+
+Although this does not perform as well as the supervised methods, it is still interesting that the clustering still performs significantly better than our baseline. This means that if we were not given the classifications for the schools, we could still build a fairly decent model using unsupervised learning.
+
+**Hierarchical Clustering**
+
+Finally let's try Hierarchical Clustering
+
+```{r}
+df6 <- filter(df_orig, Title.1.Eligible == "Yes"|Title.1.Eligible == "No") %>%
+     filter(Location.City=="AUSTIN") %>%
+     mutate(stratio = Full.Time.Teachers / member,
+            perc_white = white / member,
+            perc_lunch = Total.Lunch / member)
+x <- cbind(df6$perc_white,df6$perc_lunch)
+y <- df6$Title.1.Eligible
+
+ggplot(data = df6, mapping = aes(x=perc_white,y=perc_lunch,colour=Title.1.Eligible)) +
+  geom_point() + xlab("Percentage of White Students") + ylab("Percentage of Students Qualified for Free/Reduced Lunch") +
+  ggtitle("Schools in Austin")
+
+hc.complete=hclust(dist(x),method="complete")
+plot(hc.complete)
+
+hc.cut=cutree(hc.complete,2)
+hc.cut
+
+cluster_col_func <- function(x){ifelse(x=="1",'orange','green')}
+cluster_col <- cluster_col_func(hc.cut)
+col_func <- function(x){ifelse(x=="Yes","blue","red")}
+col <- col_func(y)
+
+clust_pred_function <- function(x){ifelse(x==2,"No","Yes")}
+clust_pred <- clust_pred_function(hc.cut)
+
+plot(x,col=cluster_col,cex=2,pch=1,lwd=2,
+             xlab = "Percentage of White Students",
+             ylab = "Percentage of Students Qualified for Free/Reduced Lunch",
+             main = "Clustering")
+points(x=x[,1],y=x[,2],col=col,pch=19)
+text(.95,.95,labels = paste("Error =",toString(mean(clust_pred != df6$Title.1.Eligible))))
+table(clust_pred, df6$Title.1.Eligible)
+mean(clust_pred != df6$Title.1.Eligible)
+```
+
+We can see that Hierarchical Clustering performs better than K-means.
+
+### San Antonio
+
+First let's take a look a the distribution of schools in San Antonio.
+
+```{r}
+df_svm = filter(df_orig, (Title.1.Eligible == "Yes")|(Title.1.Eligible == "No")) %>%
+  filter(Location.City == 'SAN ANTONIO') %>%
+  dplyr::select(Longitude, Latitude, Title.1.Eligible)
+lat <- as.numeric(df_svm$Latitude)
+lon <- as.numeric(df_svm$Longitude)
+T1 <- as.factor(df_svm$Title.1.Eligible)
+df_sa <- data.frame(lat,lon,T1)
+
+
+sa <- get_googlemap(center= c(lon = -98.493628, lat = 29.424122), maptype = "roadmap",zoom = 11)
+ggmap(sa) +
+  geom_point(data = df_sa, mapping = aes(x=lon,y=lat,colour=T1)) +
+  ditch_the_axes + ggtitle("Schools of San Antonio")
+```
+
+Looking at the map, it looks like schools not Title I eligible are centered towards North San Antonio.
+
+**Radial Basis SVM**
+
+```{r}
+tuned = tune.svm(T1~., data = df_sa,
+                 cost = 1:10,
+                 gamma = 1:10,
+                 kernel = "radial",
+                 tunecontrol=tune.control(cross=10))
+best_gamma <- tuned$best.model$gamma
+best_cost <- tuned$best.model$cost
+
+
+svmfit=svm(T1~.,data=df_sa,type="C",kernel="radial",cost=best_cost,gamma=best_gamma)
+print(svmfit)
+
+test <- df_sa
+test$pred <- predict(svmfit, df_sa)
+
+ggmap(sa) +
+  geom_point(data = test, mapping = aes(x=lon,y=lat,colour = pred, shape = T1),size = 3) +
+  ditch_the_axes +
+  labs(title = "Radial Basis SVM Predictions",
+       caption = paste("Misclassification error = ", toString(mean(test$pred!=test$T1))))
+
+mean(test$pred!=test$T1)
+table(test$pred,test$T1)
+```
+
+The SVM seems to pick up on the fact the schools in the North are less likely to be Title I eligible, but with a bias towards classifying the schools as eligible.
+
+### Los Angeles
+
+Finally let's look at LA
+
+```{r}
+df_svm = filter(df_orig, (Title.1.Eligible == "Yes")|(Title.1.Eligible == "No")) %>%
+  filter(Location.City == "LOS ANGELES") %>%
+  dplyr::select(Longitude, Latitude, Title.1.Eligible)
+lat <- as.numeric(df_svm$Latitude)
+lon <- as.numeric(df_svm$Longitude)
+T1 <- as.factor(df_svm$Title.1.Eligible)
+df_la <- data.frame(lat,lon,T1)
+
+
+la <- get_googlemap(center= c(lon = -118.293685, lat = 34.052234), maptype = "roadmap",zoom = 11)
+ggmap(la) +
+  geom_point(data = df_la, mapping = aes(x=lon,y=lat,colour=T1)) +
+  ditch_the_axes + ggtitle("Schools of Los Angeles")
+```
+
+Los Angeles does not have many T1 eligible schools, which makes sense given the high cost of living. There is however a small cluster of T1 eligible schools in South West LA.
+
+**Radial Basis SVM**
+
+```{r}
+tuned = tune.svm(T1~., data = df_la,
+                 cost = 1:10,
+                 gamma = 1:10,
+                 kernel = "radial",
+                 tunecontrol=tune.control(cross=10))
+best_gamma <- tuned$best.model$gamma
+best_cost <- tuned$best.model$cost
+
+
+svmfit=svm(T1~.,data=df_la,type="C",kernel="radial",cost=best_cost,gamma=best_gamma)
+print(svmfit)
+
+test <- df_la
+test$pred <- predict(svmfit, df_la)
+
+ggmap(la) +
+  geom_point(data = test, mapping = aes(x=lon,y=lat,colour = pred, shape = T1),size=2) +
+  ditch_the_axes +
+  labs(title = "Radial Basis SVM Predictions",
+       caption = paste("Misclassification error = ", toString(mean(test$pred!=test$T1))))
+
+mean(test$pred!=test$T1)
+table(test$pred,test$T1)
+```
+
+The SVM seems to pick up on the small cluster in South West LA but does not do as well with the Title I eligble schools scattered throughout LA.
+
+### Texas
+
+Now let's look at the Texas.
+
+```{r}
+df_svm = filter(df_orig, (Title.1.Eligible == "Yes")|(Title.1.Eligible == "No")) %>%
+  filter(State == 'Texas') %>%
+  dplyr::select(Longitude, Latitude, Title.1.Eligible,Location.City) %>%
+  mutate(Longitude_Scaled = Longitude/3)
+df_svm$Latitude <- as.numeric(df_svm$Latitude)
+df_svm$Longitude <- as.numeric(df_svm$Longitude)
+df_svm$Title.1.Eligible <- as.factor(df_svm$Title.1.Eligible)
+ggplot(data = df_svm, mapping = aes(x=Longitude,y=Latitude,colour=Title.1.Eligible)) + geom_point()
+```
+
+Tuning the parameters with 10-fold CV is very slow but when I ran it, it returned cost = 5 and gamma = 10. I've included the code but commented it out in case you have a free 30 minutes and want to try it out for yourself.
+
+```{r}
+# Tuning is super slow so just trust me that it returned cost=5 and gamma=10
+#tuned = tune.svm(Title.1.Eligible~Longitude_Scaled+Latitude, data = df_svm,
+#                 cost = 2^2:10,
+#                 gamma = 2^2:10,
+#                 kernel = "radial",
+#                 tunecontrol=tune.control(cross=10))
+#best_gamma <- tuned$best.model$gamma
+#best_cost <- tuned$best.model$cost
+
+#svmfit=svm(Title.1.Eligible~Longitude_Scaled+Latitude,data=df_svm,type="C",kernel="radial",cost=best_cost,gamma=best_gamma)
+svmfit=svm(Title.1.Eligible~Longitude+Latitude,data=df_svm,type="C",kernel="radial",cost=5,gamma=10)
+print(svmfit)
+```
+
+The SVM  seems to pick that schools not eligible for Title I funding tend to be centered around large cities, but does not do as well within those cities, which makes sense.
+
+### US
+
+For now we will only look at elementary schools. About 81% of elementary schools in the US are Title I eligible, so we will use this as our baseline.
+
+```{r}
+df_elem <- filter(df_orig, df_orig$level == 'Primary School') %>% filter(Title.1.Eligible == "Yes"|Title.1.Eligible == "No")
+nrow(subset(df_elem, df_elem$Title.1.Eligible == 'Yes'))/nrow(df_elem)
+df_elem <- dplyr::select(df_elem, State, Location.City,
+                    Longitude, Latitude, Title.1.Eligible, Total.Lunch,
+                   Full.Time.Teachers, member, am, asian, hisp, black, white, pacific, tr, toteth)
+df_elem_test_vars <- dplyr::select(df_elem, Title.1.Eligible, Total.Lunch,
+                            Full.Time.Teachers, am, asian, hisp, black, white, pacific, tr, toteth)
+nrow(subset(df_elem, df_elem$Title.1.Eligible=="Yes"))/nrow(df_elem) # Base line = 81 %
+```
+
+**Decision Tree**
+
+First we run a basic decision tree.
+```{r}
+require(tree)
+dim(df_elem_test_vars)
+df_elem_test_vars$Title.1.Eligible <- as.factor(df_elem_test_vars$Title.1.Eligible)
+elem_tree <- tree(Title.1.Eligible~., data = df_elem_test_vars)
+plot(elem_tree)
+text(elem_tree,pretty=0)
+elem_tree
+```
+
+The decision tree tags all the schools as eligible. Evidently there is too much noise in the data.
+
+**Random Forest**
+
+Let's use a random forest to determine the most important predictors.Again this is hard coded to make it run faster.
+
+```{r}
+require(randomForest)
+set.seed(11)
+#train_vars=sample(1:nrow(df_elem_test_vars),36474) # 70% of data
+#rf.elem = randomForest(Title.1.Eligible ~ . ,data=df_elem_test_vars, subset=train_vars)
+#rf.elem$importance
+#varImpPlot(rf.elem,
+#           sort = T,
+#           main="Variable Importance",
+#           pch = 19,
+#           col = 'blue')
+```
+
+Total number of students that are eligible for free/reduced lunch, number of full time teachers, number of white students, and number of minority students are the most important predictors for Title I eligibility. Let's take the 4 most important.
+
+I tested for the optimal number of predictors sampled for splitting at each node in a random forest, but the code is very slow. It is included commented out but the result is hard coded.
+
+```{r}
+df_elem1 <- dplyr::select(df_elem, Title.1.Eligible, Total.Lunch,
+                   Full.Time.Teachers, toteth, white)
+df_elem1$Title.1.Eligible <- as.factor(df_elem1$Title.1.Eligible)
+dim(df_elem1)
+train=sample(1:nrow(df_elem1),36474) # 70% of data
+# Testing number of predictors sampled for spliting at each node
+#test.err=double(4)
+#for(mtry in 1:4){
+#  fit=randomForest(Title.1.Eligible~.,data=df_elem1,subset=train,mtry=mtry)
+#  pred=predict(fit,df_elem1[-train,])
+#  test.err[mtry]=mean(pred!=df_elem1[-train,]$Title.1.Eligible)
+#  cat(mtry," ")
+#}
+test.err <- c(0.1475085, 0.1497473, 0.1506429, 0.1511546)
+matplot(1:4,test.err,pch=19,col="blue",type="b",ylab="Misclassification Error",xlab="mtry")
+```
+
+Looking at the graph, the optimal mtry is 1. Let's try it out:
+
+```{r}
+min_mtry<- which.min(test.err)
+fit=randomForest(Title.1.Eligible~.,data=df_elem1,subset=train,mtry=min_mtry)
+fit
+pred=predict(fit,df_elem1[-train,])
+mean(pred!=df_elem1[-train,]$Title.1.Eligible)
+mean(pred==df_elem1[-train,]$Title.1.Eligible)
+table(pred, df_elem1[-train,]$Title.1.Eligible)
+```
+
+This produces a slightly higher sccuracy rate than the baseline. Again I tested for the optimal number of trees but because it is slow, the code is commented out and the result is hard coded.
+
+```{r}
+#tree.error = double(10)
+numTrees <- 1:10*20
+#for(i in 1:10){
+#  fit=randomForest(Title.1.Eligible~.,data=df_elem1,subset=train,ntree=numTrees[i],mtry = min_mtry)
+#  pred=predict(fit,df_elem1[-train,])
+#  tree.error[i]=mean(pred!=df_elem1[-train,]$Title.1.Eligible)
+#  cat(numTrees[i]," ")
+#}
+tree.error <- c( 0.1538412, 0.1521141, 0.1506429, 0.1498113, 0.1494915, 0.1482121, 0.1466769, 0.1478283, 0.1471886, 0.1484040)
+matplot(numTrees,tree.error,pch=19,col="blue",type="b",ylab="Misclassification Error",xlab = "Number of Trees")
+min_tree <- numTrees[which.min(tree.error)]
+fit=randomForest(Title.1.Eligible~.,data=df_elem1,subset=train,ntree=numTrees[which.min(tree.error)],mtry=min_mtry)
+fit
+pred=predict(fit,df_elem1[-train,])
+mean(pred!=df_elem1[-train,]$Title.1.Eligible)
+mean(pred==df_elem1[-train,]$Title.1.Eligible)
+table(pred, df_elem1[-train,]$Title.1.Eligible)
+```
+
+This does not significantly improve the accuracy rate.
+
+<!-- ## Decision Tree to Predict student teacher ratio -->
+<!-- https://data.world/wangweiyi722/f-17-eda-project-4/insights/534ac60e-0e94-4847-92fd-d4caab010afd -->
+
+<!-- I wanted to see if we could determine whether there was a high student teacher ratio or a low student teacher ratio using our other factors. First we had to create the student teacher ratio which is simply the number of students divided by the number of teachers. For this data set we focused on primary schools in Texas. Running every school in the US would take an extremely long time. Additionally, we wanted to be consistent by only using primary school, because it is likely that the optimal student teacher ratio for primary school is different from high school and university. We than set less than 16 as a small student teacher ratio and 16 and larger as a larger student teacher ratio. We than created our tree. -->
+
+<!-- ```{r results='hide', message=FALSE, warning=FALSE} -->
+<!-- require(MASS) -->
+<!-- require(tidyverse) -->
+<!-- require(dplyr) -->
+<!-- require(data.world) -->
+<!-- require(ggplot2) -->
+<!-- require(boot) -->
+<!-- require(tree) -->
+<!-- library(e1071) -->
+
+<!-- project<- "https://data.world/wangweiyi722/f-17-eda-project-4" -->
+<!-- data.world::set_config(cfg_env("DW_API")) -->
+<!-- Edf <- data.world::query( -->
+<!--   data.world::qry_sql("SELECT full_time_teachers, level, member, asian, hisp, black, white, pacific, total_lunch, am, title_1_eligible, urban_locale, latitude, location_city, county_name, longitude FROM SchoolSurvey where State ='Texas'"), -->
+<!--   dataset = project -->
+<!-- ) -->
+
+
+<!-- ``` -->
+
+<!-- ```{r results='hide', message=FALSE, warning=FALSE} -->
+<!-- Edf1 = dplyr::filter(Edf, Edf$full_time_teachers>1) -->
+<!-- Edf1 = dplyr::mutate(Edf1, stratio = if_else(member/full_time_teachers <= 16,'small','large')) -->
+<!-- #Edf1 = dplyr::select(Edf1, - reconstituted_year) -->
+<!-- Edf1%>% drop_na() -->
+<!-- Edf2 = dplyr:: filter(Edf1, level == "Primary School") -->
+<!-- stratio1 = Edf2$stratio -->
+<!-- Edf2 = data.frame(Edf2,stratio1) -->
+<!-- train =sample(1:nrow(Edf2),3500) -->
+<!-- tree1 = tree(stratio1~ .- member - stratio1 -full_time_teachers,data=Edf2,subset=train) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- #summary(tree1) -->
+<!-- plot(tree1) -->
+<!-- text(tree1,pretty=0) -->
+<!-- tree.pred=predict(tree1,Edf2[-train,],type="class") -->
+<!-- with(Edf2[-train,],table(tree.pred,stratio1)) -->
+<!-- ``` -->
+
+<!-- Our results are about 69.3% accurate. We get pretty good results; however I wanted to see how race specifically plays a factor in student teacher ratios so we ran the code again but only looked at the number of students by race in each of the schools. -->
+
+<!-- The results are as follows: -->
+
+<!-- ```{r} -->
+
+<!-- tree2 <- tree(stratio1~ asian+hisp+black+white+pacific+total_lunch+am,data=Edf2,subset=train) -->
+<!-- #summary(tree2) -->
+<!-- plot(tree2) -->
+<!-- text(tree2,pretty=0) -->
+<!-- tree.pred1=predict(tree1,Edf2[-train,],type="class") -->
+<!-- with(Edf2[-train,],table(tree.pred1,stratio1)) -->
+
+<!-- ``` -->
+
+<!-- We get a ration of about 69.5% which is virtually the same. However when we look at the tree. We can see the main factors that drive the tree are the number of Hispanics at are particular school. Its possible that it is likely in minority communities the student teacher ratio is especially high in relations to more affluent communities -->
+
+
+<!-- ## Subsidized Lunch and number of teachers predicting Title 1 Eligibility using SVM -->
+<!-- https://data.world/wangweiyi722/f-17-eda-project-4/insights/0d1b9b1e-f71e-4a09-bd2b-36db4536d023 -->
+
+<!-- We wanted to try the SVM function, and we wanted to try it by looking at students who received subsidized lunches and the faculty size relate to Title 1 Eligibility. We wanted to standardize the number of students who receive subsidized lunches so we dividend the number by the number of students and labeled it lunchperc. Additionally, in order to have good visibility on the graph we only selected data on primary schools in Dallas. Just to get an idea of what it would look like the graph goes as follows: -->
+
+<!-- ```{r} -->
+<!-- Edf1sm = dplyr::filter(Edf, full_time_teachers>1, total_lunch >0, level != 'Other', location_city == 'DALLAS') -->
+<!-- Edf1sm = dplyr::mutate (Edf1sm, lunchperc = total_lunch/member) -->
+<!-- #Edf1sm = dplyr::select(Edf1sm, - reconstituted_year) -->
+
+<!-- ggplot(Edf1sm, aes(x =lunchperc , y = full_time_teachers, colour = title_1_eligible))+geom_point() -->
+
+<!-- ``` -->
+
+<!-- Now that we know how the code looks we will run the code to get our SVM model, and it as follows. -->
+
+<!-- ```{r} -->
+<!-- xy = dplyr::select(Edf1sm, full_time_teachers, lunchperc, title_1_eligible) -->
+<!-- xy$title_1_eligible <- as.factor(xy$title_1_eligible) -->
+<!-- svmfit=svm(title_1_eligible~full_time_teachers+lunchperc,data=xy, type="C", kernel="linear",cost=10 ,scale=FALSE) -->
+<!-- #print(svmfit) -->
+<!-- plot(svmfit, xy) -->
+<!-- ``` -->
+
+<!-- We can see that the model does a pretty good job of cutting the data, and from a quick look we can see that the model was able to group the two sides: Yes and No for title 1 eligibility -->
+
+<!-- ## Urban Locale - K-Means Clustering Unsupervised Learning -->
+<!-- https://data.world/wangweiyi722/f-17-eda-project-4/insights/e7a284c0-e7f5-437f-ad31-d121432fdf65 -->
+
+<!-- For this insight, I wanted to create a K-means clustering to see if we can predict which locale whether it be the Large, mid-size, or small city. The predictors for this is longitude and latitude, and we are all looking at just Dallas County. -->
+<!-- We first want to start off by visualizing the data, and it goes as follows: -->
+
+<!-- ```{r} -->
+<!-- Edf1cl = dplyr::filter(Edf, full_time_teachers>1, total_lunch >0, level != 'Other', county_name == 'DALLAS COUNTY', grepl('City', urban_locale)) -->
+<!-- Edf2cl = dplyr::select(Edf1cl, latitude, longitude, urban_locale) -->
+<!-- Edf2clb = dplyr::select(Edf1cl, latitude, longitude) -->
+<!-- ggplot(Edf2cl, aes(x =latitude, y = longitude, colour = urban_locale))+geom_point() -->
+<!-- ``` -->
+
+<!-- Now we can begin the kmeans clustering -->
+
+<!-- ```{r results='hide'} -->
+<!-- km.out=kmeans(Edf2clb,3,nstart=15) -->
+<!-- km.out$cluster -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- ggplot(Edf2cl, aes(x=latitude, y=longitude, colour = as.factor(km.out$cluster))) + geom_point() -->
+
+<!-- ``` -->
+
+<!-- The model seems like it did a pretty good job, however, the large city is underestimated and the mid-size and the small city are over estimated. -->
+
+<!-- Now we want to look out to see how far from the center, these clusters are: the Code and graph is as follows -->
+
+<!-- ```{r} -->
+<!-- Edf2clc <- data.frame(km.out$centers, km.out$size) -->
+<!-- #names(Edf2clc) -->
+<!-- Edf2cl %>% ggplot() + geom_point(mapping = aes(x=latitude, y=longitude, colour = as.factor(km.out$cluster))) + geom_point(data=Edf2clc, mapping=aes(latitude, longitude, size=km.out.size)) -->
+
+<!-- ``` -->
+
+<!-- We can see that the Large City has by far the larges KM.out.size. It looks like KM can do a fairly good job of creating clusters for this particular grouping -->
+
+<!-- ## Urban Locale - Hierarchical Clustering Unsupervised Learning -->
+<!-- https://data.world/wangweiyi722/f-17-eda-project-4/insights/fbcab591-0a52-4c96-a27d-a5afbc6f1bfc -->
+<!-- Next I wanted to try Hierarchical Clustering for the Unsupervised Learning.  I wanted to start off by looking at Hierarchical Clustering for the complete, single and average cases: It goes as follows: -->
+
+<!-- ```{r} -->
+<!-- hc.complete=hclust(dist(Edf2clb),method="complete") -->
+<!-- plot(hc.complete) -->
+<!-- hc.single=hclust(dist(Edf2clb),method="single") -->
+<!-- plot(hc.single) -->
+<!-- hc.average=hclust(dist(Edf2clb),method="average") -->
+<!-- plot(hc.average) -->
+
+<!-- ``` -->
+
+<!-- We know that there are only three possible results that can be predicted: the city can be small, mid-size, or large. The Complete case appears that there are 3 clusters, the Single case appears there there are much more than 3 clusters, and the Average case appears that there are about 3-4 clusters. It seems like the Complete Case would be the best option. So know we will do the clustering. -->
+
+<!-- ```{r} -->
+<!-- Edf2cld = dplyr::select(Edf1cl, urban_locale) -->
+<!-- Edf2cld = dplyr::mutate(Edf2cld, urban_locale_123 = ifelse(urban_locale == 'City, Large', 1, ifelse(urban_locale == 'City, Mid-size',2,3))) -->
+<!-- Edf2cld = dplyr::select(Edf2cld, urban_locale_123) -->
+<!-- Edf2cld_list = data.matrix(Edf2cld) -->
+
+<!-- hc.cut=cutree(hc.complete,3) -->
+<!-- table(hc.cut,Edf2cld_list) -->
+<!-- plot(hc.complete,labels=Edf2cld_list) -->
+
+<!-- ``` -->
+
+<!-- In this case the results are quite poor. -->
+
+## **Do all eligible schools receive Title 1 funding?**
+```{r, include=FALSE}
+require(tidyverse)
+require(gbm)
+require(dwapi)
+require(tree)
+require(knitr)
+require(e1071)
+
+project = "https://data.world/wangweiyi722/f-17-eda-project-4/"
+query = paste("SELECT state, location_zip, lowest_grade, title_1_status, member, hisp, white FROM SchoolSurvey WHERE title_1_eligible = 'Yes' AND title_1_status != 'Missing'", sep="")
+df.n <- data.world::query(
+  data.world::qry_sql(query),
+  dataset = project
+) %>%
+  dplyr::filter(
+    lowest_grade!="NA/No Students Reported" &
+      member>=0 &
+      hisp>=0 &
+      white>=0
+  ) %>%
+  dplyr::mutate(
+    region_code = location_zip %/% 10000,
+    has_program = ifelse(grepl(".*no program", title_1_status), "No", "Yes")
+  )
+```
+
+Under the 2010 renewal of the Elementary and Secondary Education Act, do eligible schools always receive Title 1 funding? The answer is no. In the state of Texas, approx. 73% of eligible middle and high schools do not receive Title 1 funding, whereas 95% of eligible Texas elementary schools (here meaning schools that accept kids aged 10 or younger) do. By contrast, in California, 100% of eligible schools receive funding unobstructed. The natural inference is that state law determines whether a school receives Title 1 funding. 
+
+In the following sections of the RMD, I outline the developing understanding of the data that led me to that inference. I'll look especially at Texas data to try to suss out the contours of Texas law on Title 1. 
+
+## **Eligible schools, pt. 1**
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-4/insights/0ad9aa40-1c7c-4142-866b-d04db62de18b
+
+*In this insight, I had not yet realized that state law played a determining role; consequently, I looked at the data for all states included in the dataset. Moreover, I assumed that the schools themselves decided whether or not to accept Title 1 funding rather than following state law; therefore, my language reflects that assumption.*
+
+**Introduction**
+
+By filtering our dataset, I discovered that even if a school is eligible for Title 1 funding--i.e. they qualify for targeted assistance (TAS) or schoolwide programs (SWP)--the school will sometimes decline both options, preferring not to take any Title 1 funding.
+
+To use terms from our dataset, these are schools with both of the following:
+
+* `Title 1 Eligible` == "Yes"
+* `Title 1 Status` == "Eligible for TAS but provides no program" || Title 1 Status == "Eligible for SWP bur povides *[sic]* no program"
+
+I decided to use boosting trees to find the most important influences on a school's decision. I used a subset of variables that I thought might have an effect.
+
+My hypothesis was that the school's region, represented in `region_code`, would have a big influence: conservative states in the South might be more resistant to taking federal funding for education. Note that `region_code` works by taking the first digit of the school's zip code. You can see the effect in the map below:
+
+![](https://upload.wikimedia.org/wikipedia/commons/thumb/2/24/ZIP_Code_zones.svg/400px-ZIP_Code_zones.svg.png)
+
+
+**Boosting**
+
+The most influential variables in determining a school's decision are listed below.
+
+```{r}
+# Note: For some reason I had to put as.factor() around my categorical variables in order to get the boosting function to work with them.
+
+train=sample(1:nrow(df.n),46390) # 70% of data
+df_train=df.n[train,] %>% dplyr::filter(substr(state,1,1)<'N') # In order to avoid having `state` be a predictor with > 32 levels, which would break my tree operations
+
+boost.program=gbm(
+  as.factor(has_program)~
+    hisp+ # Number of Hispanics
+    white+ # Number of whites
+    as.factor(lowest_grade)+
+    region_code+ # Custom var: what part of the country the school is in
+    as.factor(state),
+  data=df_train,
+  distribution="gaussian",
+  n.trees=1000,
+  shrinkage=0.01,
+  interaction.depth=4)
+```
+
+```{r, include=FALSE}
+sum=summary(boost.program)
+```
+
+```{r}
+relinf=sum$rel.inf
+kable(data.frame(as.character(sum$var),relinf), format="markdown")
+```
+
+*Note: For this document, I didn't use all the variables I used for the [insight](https://data.world/wangweiyi722/f-17-eda-project-4/insights/0ad9aa40-1c7c-4142-866b-d04db62de18b), because I didn't want it to take forever to load. In the boosting table above, the top three variables are the same in the insight and here.*
+
+The results indicate that by far the most important variables were `lowest_grade` (the lowest grade offered, e.g. kindergarten or 9th grade), `state` (the state in which the school is located), and `white` (the number of white students at the school).
+
+**Interpretation**
+
+Those results were surprising and interesting. I discuss them more in the [insight](https://data.world/wangweiyi722/f-17-eda-project-4/insights/0ad9aa40-1c7c-4142-866b-d04db62de18b), but by far the most important result for my research was `state`. 
+
+The influence of `state` was my first clue as to the importance of state law. I was beginning to realize that state law determined whether eligible schools accepted or declined Title 1 funding--i.e., that schools weren't really the ones making the decision. 
+
+`Lowest_grade` and `white` seemed strange to me, like perhaps they were standing in for other, more relevant predictors. But in any case, they had proven more influential than those other predictors, so I decided to use them anyway. 
+
+It's important to note that the boosting table shows the *relative* influence of the variables, i.e. how influential they were relative to one another. In the next section, I built a model to determine whether they were actually any good at predicting whether an eligible school would or wouldn't receive funding.
+
+## **Eligible schools, pt. 2**
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-4/insights/75042a41-87b9-4115-a5a5-a33709eadc78
+
+**Introduction**
+
+I had realized that state law might determine whether a school received or didn't receive funding, so I came up with a new hypothesis:
+
+*Each school fits into some category under state law, and the category determines whether they accept or decline funding. That means that if we can understand what category the school fits into, we should be able to predict whether it accepts or declines.*
+
+To make the predictions, I took the three most important variables from last time--`lowest_grade`, `state`, and `white`--and put them in action in a decision tree. It's important to note that at this point I was still using data from all states rather than narrowing my focus to one state. 
+
+**Decision Tree**
+
+*Note: In this section, my numbers end up being slightly different than in the original [insight](https://data.world/wangweiyi722/f-17-eda-project-4/insights/75042a41-87b9-4115-a5a5-a33709eadc78). The reason is that for this RMD, I stopped using a bunch of predictors I didn't consider useful, and consequently I was able to pull a data frame with a much higher number of observations. Therefore, the training data set is far larger in terms of raw numbers in the RMD than in the insight.* 
+
+After creating the decision tree, I first evaluated its performance by looking at its rate of correct predictions. 
+
+```{r}
+tree1 <- tree(
+  as.factor(has_program)~
+    white+
+    as.factor(lowest_grade)+
+    as.factor(state), 
+  data = df_train)
+
+tree1.pred=predict(tree1,df_train,type="class")
+mean(tree1.pred==df_train$has_program)
+```
+
+Overall, the tree's rate of accurate prediction was in the high 80s--indicating a quite strong model. That seemed to suggest my hypothesis was right: we could predict a school's decision.
+
+Luckily, I had my wits about me, and I decided to look at a confusion matrix to confirm that the model performed well:
+
+```{r}
+with(df_train,table(tree1.pred,df_train$has_program))
+```
+
+In that table, the vertical margin is the school's actual acceptance/declination and the horizontal margin is the school's predicted acceptance/declination. 
+
+The confusion matrix tells us that the tree did very well at predicting true positives: it very seldom guessed that the school did take funding when in actuality the school didn't take funding. However, when the tree predicted that the school would decline the funding, it wrong approx. 30% of the time. That's not a very good record, despite the tree's low misclassification error overall. 
+
+So was our tree actually any good? To find out, I decided to test against a null hypothesis.
+
+**Testing Against Null**
+
+I calculated the ratio of Actual Yes to Actual No in the training set, and found it to be about 80%. That is, eligible schools accepted Title 1 funding approximately 80% of the time. 
+
+In that case, we might expect a successful classification rate of ~80% for a model that simply guessed Yes every time. To test this null hypothesis, I wrote some simple R code:
+
+```{r}
+df2 = df.n %>% dplyr::mutate(null="Yes")
+mean(df2$null==df2$has_program)
+```
+
+As expected, testing the null hypothesis showed that a model that simply predicted Yes every time would be correct about 80% of the time. That means our model, with its rate of successful prediction in the upper 80s, only improved on the null by a few percentage points.
+
+And even those few percentage points may not mean much. Remember that the null simply guessed Yes every time. It's reasonable, then, to think that our model only improved on the null because it occasionally guessed No. But the confusion matrix tells us that when our model did guess No, it was wrong around 30% of the time. That's better than 50-50, but it's still not very accurate predicting. 
+
+**Interpretation**
+
+Either the model or the variables were flawed. Could it be that `lowest_grade`, `state`, and `white` were simply bad predictors? In that case, it might be impossible to predict whether an eligible school would accept or decline Title 1 funding. 
+
+I decided a more likely explanation was that my model had failed because I had tried to make for all fifty states. If each state had its own laws governing whether an eligible school accepted or declined Title 1 funding, then the discrepancy between the states' laws would confound my model. I needed to narrow my focus to one state and see what I could come up with.
+
+## **Eligible schools, pt. 3**
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-4/insights/e20ef063-4b6d-4c84-811c-7cca3ac15fe7
+
+**Introduction**
+
+I had realized that because each state had its own rules for whether an eligible school should or should not receive Title 1 funding, it was a fool's errand to try to design one function for multiple states. 
+
+Consequently, I decided to narrow my focus to one state: Texas. This would eliminate the effect of multiple states having different laws governing whether an eligible school should accept or decline funding, enabling us to identify patterns in the data.
+
+**Boosting**
+
+To get started, I used boosting to confirm that the most influential variables nationally (i.e., `lowest_grade` and `white`, since we weren't including `state` anymore) were also the most influential variables in Texas.
+
+```{r}
+texas.n <- df.n %>% dplyr::filter(state=="Texas")
+boost.program=gbm(
+  as.factor(has_program)~
+    hisp+
+    white+
+    as.factor(lowest_grade),
+  data=texas.n,
+  distribution="gaussian",
+  n.trees=100,
+  shrinkage=0.1,
+  interaction.depth=4)
+
+renderPlot(summary(boost.program))
+```
+
+
+*Note: For this document, I didn't use all the variables I used for the [insight](https://data.world/wangweiyi722/f-17-eda-project-4/insights/e20ef063-4b6d-4c84-811c-7cca3ac15fe7), because I didn't want it to take forever to load. In the boosting table above, the top two variables are the same in the insight and here.*
+
+These results do suggest that the most influential variables in Texas, as in the nation, are `lowest_grade` and `white`. Notice that the dropoff between `white` and `hisp` is precipitous. So I decided to see how well `lowest_grade` and `white` might perform if we were to use them to predict eligible schools' rates of receiving Title 1 funding. We didn't need a model to get a sense of those predictors' usefulness; some simple visualization would suffice. 
+
+**Visualizing the Data**
+
+Since `state` was out of the picture, we finally had a two-dimensional dataset--and that meant we could finally do some visualization! 
+
+I made a simple plot to show the distribution of eligible schools that received and did not receive Title 1 funding. The green dots represent eligible schools that do not receive Title1 funding, while the blue dots represent eligible schools that do receive Title 1 funding. On the x axis, -1 represents pre-k, 0 represents kindergarten, 1 represents first grade, and so on.
+
+```{r}
+# In the code below, I changed `lowest_grade` and `has_program` (which is the output variable) to integer values. This made visualization simpler and also would enable the support vector machine I would make later on.
+texas.n = texas.n %>%
+  dplyr::select(white, lowest_grade, has_program) %>%
+  dplyr::mutate(
+    lg_int=ifelse( # lg_int represents the lowest grade offered. Kindergarten is 0.
+      grepl("\\d{2}.*", lowest_grade),
+      suppressWarnings(as.numeric(substr(lowest_grade,1,2))),
+      ifelse(
+        grepl("\\d.*", lowest_grade),
+        suppressWarnings(as.numeric(substr(lowest_grade,1,1))),
+        ifelse(
+          lowest_grade=="Kindergarten",
+          0,
+          -1
+        )
+      )
+    )
+  ) %>%
+  dplyr::mutate(hp_int=ifelse(has_program=="Yes",1,0)) # whether a school receives funding
+
+x.n=matrix(
+  cbind(texas.n$lg_int, texas.n$white),
+  ncol=2)
+
+renderPlot(plot(x.n,col=texas.n$hp_int+3,pch=19,xlab="Lowest Grade",ylab="White Students"))
+```
+
+
+There seemed to be a pretty clear difference in the distribution of colors in the chart: there were almost no green dots on the left side of the plot, which meant that eligible elementary schools (or at least schools that include elementary-aged children) tended to receive funding. Meanwhile, eligible middle schools and high schools tend to vary.
+
+I decided to calculate the rates of funding for eligible elementary schools vs. eligible middle and high schools.
+
+```{r}
+texas_middle_and_high <- dplyr::filter(texas.n,lg_int>=6)
+ct <- dplyr::count(
+  texas_middle_and_high,
+  texas_middle_and_high$hp_int==1)
+ct <- data.frame(ct$"texas_middle_and_high$hp_int == 1",ct$n)
+names(ct) <- c("receive_funding.MIDDLE_AND_HIGH_SCHOOLS", "count")
+kable(ct, format="markdown")
+```
+
+```{r}
+texas_elem <- dplyr::filter(texas.n,lg_int<6)
+ct <- dplyr::count(
+  texas_elem,
+  texas_elem$hp_int==1)
+ct <- data.frame(ct$"texas_elem$hp_int == 1",ct$n)
+names(ct) <- c("receive_funding.ELEMENTARY_SCHOOLS", "count")
+kable(ct, format="markdown")
+```
+
+With a little bit of calculation, we can use those numbers to figure out the following:
+
+* Texas middle schools and high schools that are eligible for Title 1 receive funding **73% of the time**.
+* Texas elementary schools that are eligible for Title 1 receive funding **95% of the time**.
+
+**Comparing Texas with California**
+
+In California, all eligible schools receive funding. 
+
+```{r}
+california = df.n %>%
+  dplyr::filter(state=="California") %>%
+  dplyr::select(white, lowest_grade, has_program) %>%
+  dplyr::mutate(
+    lg_int=ifelse( # lg_int represents the lowest grade offered. Kindergarten is 0.
+      grepl("\\d{2}.*", lowest_grade),
+      suppressWarnings(as.numeric(substr(lowest_grade,1,2))),
+      ifelse(
+        grepl("\\d.*", lowest_grade),
+        suppressWarnings(as.numeric(substr(lowest_grade,1,1))),
+        ifelse(
+          lowest_grade=="Kindergarten",
+          0,
+          -1
+        )
+      )
+    )
+  ) %>%
+  dplyr::mutate(hp_int=ifelse(has_program=="Yes",1,0)) # whether a school receives funding
+
+california_middle_and_high <- dplyr::filter(california,lg_int>=6)
+ct <- dplyr::count(
+  california_middle_and_high,
+  california_middle_and_high$hp_int==1)
+ct <- data.frame(ct$"california_middle_and_high$hp_int == 1",ct$n)
+names(ct) <- c("receive_funding.MIDDLE_AND_HIGH_SCHOOLS", "count")
+kable(ct, format="markdown")
+```
+Notice that there is only one row: that's because no eligible schools did not receive funding. 
+
+```{r}
+california_elem <- dplyr::filter(california,lg_int<6)
+ct <- dplyr::count(
+  california_elem,
+  california_elem$hp_int==1)
+ct <- data.frame(ct$"california_elem$hp_int == 1",ct$n)
+names(ct) <- c("receive_funding.ELEMENTARY_SCHOOLS", "count")
+kable(ct, format="markdown")
+```
+
+This tells us that Texas is different from other states, e.g. California. In Texas, the majority of eligible elementary schools and ~70% of eligible middle/high schools receive Title 1 funding; in California, 100% of all eligible schools receive it.
+
+**Interpretation**
+
+This was a major breakthrough. It seemed to say so much about my models, the data, and even things outside the data:
+
+* **It told us something about Texas law.** That huge difference between school types in Texas seemed to suggest that, in Texas, the law mandates that eligible elementary schools accept Title 1 funding, and perhaps establishes criteria for whether eligible middle and high schools should accept. By analyzing the data, we had learned about something that actually wasn't in the dataset!
+* **I would need to exclude elementary schools from my models going forward--at least for the state of Texas.** In Texas, elementary schools are always going to accept funding. That means that including those schools in my models could only weaken the models. As long as I was attempting to model data for Texas, I would need to exclude elementary schools going forward and just focus on middle and high schools.
+* **We confirmed that state law determines an eligible school's policy on Title 1 funding.** Since Texas differs from California, we know that the federal government doesn't set blanket policies for the states on Title 1 funding. That means we shouldn't try to build models for all 50 states at once.
+
+## **Eligible schools, pt. 4**
+
+Link: https://data.world/wangweiyi722/f-17-eda-project-4/insights/c879cf27-aa0a-475d-ae8f-b2268b6b0920
+
+**Introduction**
+
+At this point, it's clear that state law does determine whether a state's eligible schools accepts Title 1 funding. Texas seems to have a policy whereby Title 1-eligible schools with young children receive Title 1 funding more often than Title 1-eligible middle schools and high schools. 
+
+Now that we know to look at states individually--and also to look at middle/high schools separately from elementary schools--we may be able to formulate some good models. What criteria determine whether an eligible middle/high school in Texas receives Title 1 funding? 
+
+**Hypothesizing**
+
+Perhaps race plays an unspoken role in the criteria for determining whether or not an eligible school gets funding, just as it plays an unspoken role in redistricting. A good hypothesis, then, might be that eligible middle and high schools with a higher proportion of white students tend to get funding more often than those with a higher proportion of Hispanic students. I decided to test that hypothesis using an SVM (support vector machine) applied to all the data for Texas middle and high schools.
+
+**Preliminary Visualization**
+
+To find out whether we should use a linear or non-linear (radial) SVM, let's chart our data and see whether there's a clear distinction between white and Hispanic schools.
+
+```{r}
+# Manipulating data to exclude elementary schools and facilitate modeling
+texas.n = df.n %>%
+  dplyr::filter(
+    state=="Texas",
+    lowest_grade=="6th Grade"|lowest_grade=="7th Grade"|lowest_grade=="8th Grade"|lowest_grade=="9th Grade"|lowest_grade=="10th Grade"|lowest_grade=="11th Grade"|lowest_grade=="12th Grade") %>%
+  dplyr::mutate(
+    perc_white=white/member,
+    perc_hisp=hisp/member,
+    hp_int=ifelse(has_program=="Yes",1,0))
+
+# Plotting percent white against percent Hispanic
+x=matrix(
+  cbind(texas.n$perc_white, texas.n$perc_hisp),
+  ncol=2)
+renderPlot(plot(x,col=texas.n$hp_int+3,pch=19,xlab="Percent White",ylab="Percent Hispanic"))
+```
+
+Wow, now that is an ungodly mess. The green dots represent eligible schools that decline Title1 funding, while the blue represent eligible schools that accept Title 1 funding. Since they're all on top of one another, we know a linear SVM would be inappropriate. 
+
+*Note: Omitted here is a use of cross-validation to find good tuning parameters for our SVM, viz. gamma and cost. You can refer to the [insight](https://data.world/wangweiyi722/f-17-eda-project-4/insights/c879cf27-aa0a-475d-ae8f-b2268b6b0920) for the code I used to perform the tuning. For this document, I used hard-coded values for gamma and cost in order to cut down the document's loadtime.* 
+```{r}
+# Radial SVM
+svmfit=svm(
+  has_program~texas.n$perc_white+texas.n$perc_hisp,
+  data=texas.n,
+  type="C",
+  kernel="radial",
+  cost=5,
+  gamma=5)
+
+# Displaying the results
+xdim1=seq(from=0,to=.5,by=.015) # .5 = 50% white
+xdim2=seq(from=0,to=.5,by=.015) # .5 = 50% Hispanic
+xgrid=expand.grid(X1=xdim1,X2=xdim2)
+ygrid=predict(svmfit,xgrid)
+renderPlot(plot(xgrid,col=as.numeric(ygrid)+1,pch=25,cex=.5,xlab="Percent White",ylab="Percent Hispanic"))
+```
+
+That figure reveals that our SVM model didn't do much good. It's also inherently error-prone, because if we allowed it to, it would make a prediction for a scenario where a school was 100% white and 100% Hispanic at the same time.
+
+If we work with the raw numbers of white students and Hispanic students at a school, rather than their proportion, we get a radial SVM that seems similarly useless:
+
+```{r}
+svmfit=svm(
+  has_program~texas.n$white+texas.n$hisp,
+  data=texas.n,
+  type="C",
+  kernel="radial",
+  cost=5,
+  gamma=5)
+
+xdim1=seq(from=0,to=1960,by=40)
+xdim2=seq(from=0,to=3050,by=65)
+xgrid=expand.grid(X1=xdim1,X2=xdim2)
+ygrid=predict(svmfit,xgrid)
+renderPlot(plot(xgrid,col=as.numeric(ygrid)+3,pch=25,cex=.5,xlab="White Students",ylab="Hispanic Students"))
+```
+
+**Interpretation**
+
+These results indicate either that SVM is simply inappropriate for this problem, or that Hispanic and white aren't very good predictors for determining whether eligible middle and high schools in Texas will or won't receive Title 1 funding. Being as I just thought of those predictors off the top of my head, I'm guessing the issue is that they're bad predictors.
+
+## **Eligible schools, conclusion**
+
+In the end, I didn't come up with a great model for whether an eligible school will accept Title 1 funding--but that doesn't mean that there isn't one. I do firmly believe that, after scaling the dataset down to the state of Texas and looking only at high schools and middle schools, it's entirely possible to find out what categories set forth in the state of Texas's policy.
+
+Here's what we learned:
+
+* Not all eligible schools end up receiving Title 1 funding.
+* State law determines whether an eligible school receives or does not receive Title 1 funding.
+* Each state has its own laws, so making a single model for all 50 states inappropriate.

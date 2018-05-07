@@ -1,0 +1,322 @@
+---
+title: "Isabel"
+runtime: shiny
+output: html_document
+---
+
+```{r setup, include=FALSE}
+require(tidyverse)
+require(data.world)
+require(dplyr)
+require(MASS)
+require(ISLR)
+require(tidyverse)
+require(data.world)
+require(ggplot2)
+require(glmnet)
+require(leaps)
+require(boot)
+knitr::opts_chunk$set(echo = TRUE)
+```
+  
+## **R Session Info**  
+
+```{r}
+sessionInfo()
+```
+
+## **Github Link** 
+https://github.com/isabelcachola/CS329
+
+## **Data.world Link**
+https://data.world/wangweiyi722/f-17-eda-project-5/
+
+## Disclaimer
+Not all data.world insights are fully represented in this RMD document. Please view data.world for deeper analysis
+
+##Link:https://data.world/wangweiyi722/f-17-eda-project-5/insights
+
+##Reading Data
+```{r}
+project<- "https://data.world/wangweiyi722/f-17-eda-project-5"
+data.world::set_config(cfg_env("DW_API"))
+# data will take a while to read
+fy13_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy13_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy13_school_budget_data  <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy13_school_budget_data"),
+  dataset = project
+)
+fy14_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy14_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy15_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy15_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy15_data_for_tableau  <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy15_data_for_tableau"),
+  dataset = project
+)
+fy16_budgeted_student_enrollment_data <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy16_budgeted_student_enrollment_data"),
+  dataset = project
+)
+fy16_school_budget_data  <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy16_school_budget_data"),
+  dataset = project
+)
+initial_allocation_rollup_map <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_allocation_rollup_map"),
+  dataset = project
+)
+initial_allocations_2_16_16 <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_allocations_2_16_16"),
+  dataset = project
+)
+initial_at_risk_allocations <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_at_risk_allocations"),
+  dataset = project
+)
+initial_budget_allocations <- data.world::query(
+  data.world::qry_sql("SELECT * FROM initial_budget_allocations"),
+  dataset = project
+)
+fy_15_budget_by_line_item <- data.world::query(
+  data.world::qry_sql("SELECT * FROM fy15_data_for_tableau"),
+  dataset = project
+)
+```
+
+## **At-Risk Budget**{.tabset .tabset-fade}
+
+### Introduction
+
+To improve	 equitable	 public	 school	 funding	 across	 the	 city, the	DC	Council	passed	the	Fair Student Funding and	SchoolBased Budgeting	 Amendment Act in	 2013.	 This	 act	 added, for	 the	 first	 time, an at-risk weight	 to	 the	 Uniform	 Per	Student	 Funding	 Formula	 (UPSFF)-meaning	 that	 all	 DC	
+public	 schools,	 both	 DCPS	 and	 public	 charter	 schools,	 now	receive	additional	 funding	based	on	 the	number	of	enrolled	students	at	their	school	who	meet	the	at-risk criteria.
+
+The Fair Funding Act defines a student as at-risk
+if they identify as:
+
+1. Homeless;
+
+2. In foster care;
+
+3. Eligible for food stamps or welfare; or
+
+4. One year older, or more, than the expected
+age for their enrolled grade level. 
+
+To improve	 equitable	 public	 school	 funding	 across	 the	 city,	the	DC	Council	passed	the	Fair Student Funding and	SchoolBased Budgeting	 Amendment Act in	 2013.	 This	 act	 added, for	 the	 first	 time, an at-risk weight	 to	 the	 Uniform	 Per	Student	 Funding	 Formula	 (UPSFF)-meaning	 that	 all	 DC	public	 schools,	 both	 DCPS	 and	 public	 charter	 schools,	 now	receive	additional	 funding	based	on	 the	number	of	enrolled	students	at	their	school	who	meet	the	at-risk criteria.
+
+Currently, schools receive $2,079	per	student	who	meets	the	at-risk	criteria.
+
+```{r, include=FALSE}
+# Setup
+# Add at risk budget as column
+df_at_risk_am <- dplyr::filter(fy16_school_budget_data, budget_allocation_category=="At-Risk")
+df_at_risk16 <- fy16_budgeted_student_enrollment_data
+df_at_risk16 <- df_at_risk16[order(df_at_risk16$school_name),]
+df_at_risk_am <- df_at_risk_am[order(df_at_risk_am$school_name),]
+df_at_risk16$at_risk_budget <- df_at_risk_am$amount
+# Add title budget
+df_at_risk_am <- dplyr::filter(fy16_school_budget_data, budget_allocation_category=="Title")
+df_at_risk_am <- df_at_risk_am[order(df_at_risk_am$school_name),]
+df_at_risk16$title_funding <- df_at_risk_am$amount
+df_at_risk16$perc_at_risk <- df_at_risk_am$at_risk_students
+```
+
+First let's look at a correlation matrix
+```{r}
+pairs(df_at_risk16[5:13])
+```
+
+Now let's look at the distrbution:
+```{r}
+sd(df_at_risk16$at_risk_budget)
+summary(df_at_risk16$at_risk_budget)
+ggplot(data=df_at_risk16,mapping=aes(at_risk_budget)) + geom_histogram(bins=30)
+```
+
+The standard deviation is almost as high as the mean, meaning At Risk Budget is highly varied. This is going to make it harder to predict. Furthermore, the distribution is heavily right skewed.
+
+Another thing to note is how correlated At Risk Funding and Title Funding are:
+```{r}
+corr(cbind(df_at_risk16$title_funding,df_at_risk16$at_risk_budget))
+```
+
+This makes sense because a school eligible for more title funding is also going to have more at risk students.
+
+### Linear Regression
+
+We will use this as a baseline. 
+
+```{r,include=FALSE}
+require(randomForest)
+require(gbm)
+set.seed(11)
+train=sample(1:109,76)
+
+colnames(df_at_risk16)[10] <- paste("one_year_older")
+df <- data.frame(df_at_risk16[5:14])
+df[] <- lapply(df, function(x) ifelse(is.na(x), median(x, na.rm = TRUE), x))
+m=dim(df[-train,])[1]
+```
+
+Let's start with a simple linear fit.
+
+```{r}
+fit = lm(at_risk_budget~.,data = df[train,])
+summary(fit)
+fit
+```
+
+This produced a relative high R2 and a low p-value. 
+
+### Random Forest
+
+First we tune the parameters.
+```{r}
+dim(df)
+# Test for optimal mtry
+oob.err=double(9)
+test.err=double(9)
+for(mtry in 1:9){
+  fit=randomForest(at_risk_budget~.,data=df,subset=train,mtry=mtry,ntree=400)
+  oob.err[mtry]=fit$mse[400]
+  pred=predict(fit,df[-train,])
+  test.err[mtry]=with(df[-train,],mean((at_risk_budget-pred)^2))
+  cat(mtry," ")
+}
+matplot(1:mtry,cbind(test.err,oob.err),pch=19,col=c("red","blue"),type="b",ylab="Mean Squared Error")
+legend("topright",legend=c("Test","OOB"),pch=19,col=c("red","blue"))
+mtry <- which.min(oob.err)
+
+# Test for optimal number of trees
+oob.err=double(10)
+test.err=double(10)
+ntree = seq(100,1000,100)
+for(idx in 1:10){
+  fit=randomForest(at_risk_budget~.,data=df,subset=train,mtry=mtry,ntree=ntree[idx])
+  oob.err[idx]=fit$mse[ntree[idx]]
+  pred=predict(fit,df[-train,])
+  test.err[idx]=with(df[-train,],mean((at_risk_budget-pred)^2))
+  cat(ntree[idx]," ")
+}
+matplot(ntree,cbind(test.err,oob.err),pch=19,col=c("red","blue"),type="b",ylab="Mean Squared Error")
+legend("topright",legend=c("Test","OOB"),pch=19,col=c("red","blue"))
+ntree <- ntree[which.min(test.err)]
+```
+
+Then we use the optimal ```mtry``` and ```ntree``` to fit a random forrest.
+```{r}
+rf.fit=randomForest(at_risk_budget~.,data=df,subset=train,mtry=mtry,ntree=ntree)
+rf.fit
+```
+
+The random forest produces a lower R2 than the linear model.
+
+###Boosting
+
+Now we fit a boosting model:
+```{r}
+boost=gbm(at_risk_budget~.,data=df[train,],
+          distribution="gaussian",
+          n.trees=ntree,shrinkage=0.01,
+          interaction.depth=4)
+summary(boost)
+```
+
+According to boosting, the most important predictor are direct certifications, title funding, and percentage of students at risk. These all make intuitive sense.
+
+Let's look at the plots for the top four predictors:
+```{r}
+par(mfrow=c(2,2))
+plot(boost,i="direct_certs",col="red")
+plot(boost,i="perc_at_risk",col="blue")
+plot(boost,i="title_funding",col="red")
+plot(boost,i="special_education",col="blue")
+```
+
+```{r,include=FALSE}
+par(mfrow=c(1,1))
+```
+
+### SVM
+
+```{r}
+require(e1071) 
+tuned = tune.svm(at_risk_budget~., data = df[train,], 
+                 cost = 1:10,
+                 tunecontrol=tune.control(cross=10))
+tuned
+best_cost <- tuned$best.model$cost
+svmfit=svm(at_risk_budget~., data = df[train,],cost=best_cost)
+
+summary(svmfit)
+```
+
+### Ridge Regression and Lasso
+```{r}
+df_norm <- df
+df_norm[1:7] <- scale(df_norm[1:7]) # Normalize all predictors
+df_norm[9:10] <- scale(df_norm[9:10])
+x=model.matrix(at_risk_budget~.-1,data=df_norm[train,]) 
+y=df_norm[train,]$at_risk_budget
+```
+
+**Ridge Regression**
+
+```{r}
+fit.ridge=glmnet(x,y,alpha=0)
+plot(fit.ridge,xvar="lambda",label=TRUE)
+```
+
+**Lasso**
+```{r}
+fit.lasso=glmnet(x,y)
+plot(fit.lasso,xvar="lambda",label=TRUE)
+```
+
+### Comparison of Models
+
+Finally, let's use run all the models on a validation set and compare the mean squared errors.
+
+```{r}
+pred.rf = predict(rf.fit, df[-train,])
+rf.err = mean((pred.rf-df[-train,])^2)/m
+
+pred.boost = predict(boost, df[-train,],n.trees=ntree)
+boost.err = mean((pred.boost-df[-train,])^2)/m
+
+pred.lm = predict(fit,df[-train,])
+lm.err = mean ((pred.lm - df[-train,])^2)/m
+
+predictedY <- predict(svmfit,df[-train,])
+error <- df[-train,]$at_risk_budget - predictedY
+svm.err <- mean(error^2)/m
+
+pred.ridge <- predict(fit.ridge, s=0, newx=model.matrix(at_risk_budget~.-1,data=df_norm[-train,]) )
+ridge.err <- mean((pred.ridge- df[-train,])^2)/m
+
+pred.lasso <- predict(fit.lasso, s=0, newx=model.matrix(at_risk_budget~.-1,data=df_norm[-train,]) )
+lasso.err <- mean((pred.lasso- df[-train,])^2)/m
+
+errors = data.frame(method=c("Random Forest","Boosting","Linear Regression","Support Vector Machine","Ridge Regression","Lasso"),
+                    err = c(rf.err, boost.err,lm.err,svm.err, ridge.err,lasso.err))
+errors
+```
+
+Which model produces the lowest MSE?
+```{r}
+errors[which.min(errors$err),]
+```
+
+```{r}
+ggplot(errors, aes(y=err, x=method)) + 
+  geom_bar(stat = "identity") + xlab("") + ylab("Mean Squared Error") +
+  coord_flip()
+```

@@ -1,0 +1,290 @@
+---
+title: "Isabel"
+runtime: shiny
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Day launched as a predictor of success
+
+I wanted to see if the day a Kickstarter was launched is a good predictor of success. First I restrict the data to Kickstarters in the US that are marked as either "failed" or "successful"
+
+First let's set up the data...
+```{r}
+require(MASS)
+require(ISLR)
+require(tidyverse)
+library(dplyr)
+
+project<- "https://data.world/isabelcachola/f-17-eda-project-3"
+df <- read.csv("https://query.data.world/s/0uetDd56RIiSaweOGdPqWuy2Idz44K", header=TRUE, stringsAsFactors=FALSE)
+
+sdf<- subset(df, country=='US')
+sdf<- subset(sdf, state=='successful'|state=='failed')
+
+set.seed(11)
+
+lda_func <-function(lda.fit){
+  print(lda.fit)
+  
+  lda.pred = predict(lda.fit, test)
+  df.pred = data.frame(lda.pred)
+  test$lda_class = lda.pred$class
+  print(ggplot(df.pred) + geom_histogram(mapping = aes(x=LD1)) + facet_wrap(~ class))
+  print(ggplot(df.pred) + geom_boxplot(mapping = aes(x=class, y=LD1)))
+  print(table(lda.pred$class,test$state))
+  print(paste('Percent correct:', toString(mean(lda.pred$class==test$state))))
+  print(paste('Percent incorrect:', toString(mean(lda.pred$class!=test$state))))
+  
+}
+sdf<- dplyr::mutate(sdf, day_launched=launched_at_weekday) 
+sdf$day_launched <- recode(sdf$day_launched, 
+                        "Sunday"=0,
+                        "Monday"=1,
+                        "Tuesday"=2,
+                        "Wednesday"=3,
+                        "Thursday"=4,
+                        "Friday"=5,
+                        "Saturday"=6)
+
+
+```
+
+Now let's look at the distribution of when Kickstarters are released:
+
+```{r}
+sdf$launched_at_weekday <- as.character(sdf$launched_at_weekday)
+sdf$launched_at_weekday <- factor(sdf$launched_at_weekday, levels=c('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'))
+ggplot(data=sdf, mapping=aes(sdf$launched_at_weekday)) + 
+  geom_bar(aes(fill=state)) + 
+  geom_text(stat='count',aes(label=..count..),vjust=-1)
+```
+
+Looking at the data, Monday and Tuesday are the most popular days to release Kickstarters while Saturday and Sunday are the least popular. It makes sense that Kickstarters are more likely to be released on weekdays. Based on the bar graph, it is not clear if launching a Kickstarter on a certain day makes it more likely to be successful, so let's run LDA and look at the results:
+
+```{r}
+train <- sdf[sample(nrow(sdf), 8421),] # 70% of the data to train
+test <- subset(sdf, !is.element(sdf$X, train$X))
+
+lda_func(lda(state~day_launched, data=train))
+lda.pred = data.frame(predict(lda(state~day_launched, data=train),test))
+table(lda.pred$class,test$state)
+paste('Percent correct:', toString(mean(lda.pred$class==test$state)))
+paste('Percent incorrect:', toString(mean(lda.pred$class!=test$state)))
+```
+
+It's clear that day launched is a poor predictor on its own. Let's look at why:
+
+```{r}
+test$posterior_successful = lda.pred$posterior.successful
+ggplot(data=test, mapping = aes(x=state,y=posterior_successful)) + geom_boxplot()
+test$posterior_failed = lda.pred$posterior.failed
+ggplot(data=test, mapping = aes(x=state,y=posterior_failed)) + geom_boxplot()
+```
+
+Looking at the box plots, there is no clear line between the probability of success and failure. This is why the model predicts all the Kickstarters as failed.
+
+Based on this model, we can draw the conclusion that the day of the week the Kickstarter was launched does not affect the success of the Kickerstarter.
+
+## Subset Selection to Predict net amount of goal reached
+
+I wanted to see which features would best predict the net amount pledged (i.e. amount pledged - goal).
+
+First let's set up the data then run exhaustive subset selection:
+
+```{r}
+sdf_select <-dplyr::mutate(sdf, net_pledged = pledged-goal,
+                           percent_pledged = pledged/goal,
+                           diff_create_launch=as.numeric(as.Date(as.character(sdf$launched_at), format='%m/%d/%Y') - as.Date(as.character(sdf$created_at), format='%m/%d/%Y')))
+sdf_select <- dplyr::select(sdf_select, goal, backers_count, name_len, blurb_len,created_at_day,launched_at_day, net_pledged, diff_create_launch)
+
+library(leaps)
+regfit.full=regsubsets(net_pledged~.,data=sdf_select)
+reg.summary = summary(regfit.full)
+reg.summary
+plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp")
+which.min(reg.summary$cp)
+points(which.min(reg.summary$cp),reg.summary$cp[which.min(reg.summary$cp)],pch=20,col="red")
+plot(regfit.full,scale="Cp")
+coef(regfit.full,which.min(reg.summary$cp))
+```
+
+Looking at the plot, we can see that a subset of 4 features yields the best results. These features are **goal, backers_count, name_len, and diff_create_launch**
+
+Goal and number of backers are used the most often. This makes sense because setting the right goal and having the exposure from backers would make the campaign more likely to be successful.
+
+Let's run a simple linear regression using these features to see how well it performs.
+
+```{r}
+lm.fit = lm(net_pledged~goal+backers_count+name_len+diff_create_launch, data = sdf_select)
+summary(lm.fit)
+```
+
+This regression has a very small p-value and an Adjusted R2 of 0.995, meaning that this model performs very well.
+
+## Distribution of the Percentage of Goal Reached
+
+ALthough this does not specifically nivolve modeling, I think that the distribution of the percentage of goal reached still gives interesting insight into how Kickstarters work. First let's set up the data:
+
+```{r}
+sdf_select <-dplyr::mutate(sdf, net_pledged = pledged-goal,
+                           percent_pledged = pledged/goal,
+                           diff_create_launch=as.numeric(as.Date(as.character(sdf$launched_at), format='%m/%d/%Y') - as.Date(as.character(sdf$created_at), format='%m/%d/%Y')))
+sdf_select <- dplyr::select(sdf_select, goal, backers_count, name_len, blurb_len,created_at_day,launched_at_day, net_pledged, diff_create_launch,percent_pledged)
+```
+
+Let's take a look at the histogram:
+```{r}
+ggplot(data=sdf_select, mapping = aes(percent_pledged)) + geom_histogram(bins = 50)
+
+```
+
+```{r}
+summary(sdf_select$percent_pledged)
+```
+
+The data has such ridiculous outliers that the histogram is not helpful at all in understanding its distribution. Looking at the summary, the **3rd Quartile is 1.10** but the **max is 22603.000**. So clearly there are a few ridiculously successful outliers. In fact the **variation is 53791.71**, which is also ridiculous.
+
+Let's try limiting it to less than the 3rd quartile:
+
+```{r}
+ggplot(data=dplyr::filter(sdf_select, percent_pledged <= 1.10), mapping = aes(percent_pledged)) + geom_histogram(bins=30)
+```
+
+It looks like the distribution could potentially be exponential up until around 90% then normal for 100% plus or minus 10%. First let's look at less than 90%:
+
+```{r}
+ggplot(data=dplyr::filter(sdf_select, percent_pledged <= .9&percent_pledged>0.1), mapping = aes(percent_pledged)) + geom_histogram(bins=100)
+```
+
+It looks like a large portion of Kickstarters receive close to nothing compared to their goal (sad). Let's limit the data to between 10% and 90% then fit it with an exponential curve.
+
+```{r}
+test <-subset(sdf_select$percent_pledged,sdf_select$percent_pledged <= .9&sdf_select$percent_pledged >= .1)
+counts <- hist(test, freq = FALSE, breaks = 100,prob=TRUE)$counts
+lambda <- 1/(mean(test))
+curve(lambda*exp(-lambda*x), col = "blue", add = TRUE)
+```
+
+The exponential curve does not perfectly fit the distribution but it's promising.
+
+Now let's look at 90% to 110%
+
+```{r}
+sdf1 <- dplyr::filter(sdf_select, percent_pledged <= 1.10&percent_pledged >= 0.9)
+var(sdf1$percent_pledged)
+ggplot(data=sdf1,mapping = aes(percent_pledged)) + geom_histogram(bins=30,colour="black", fill="white") + geom_density(alpha=.2, fill="#FF6666")
+```
+
+Although this range looked like it had the potential to be normal, when you zoom in, we can see that it is in fact not normal. The distribution seems to be largely centered at 100%. In fact, the variation of this portion of the data is 0.0009976505. Perhaps 100% to 110% can be exponential?
+
+```{r}
+sdf2 <- dplyr::filter(sdf_select, percent_pledged <= 1.10&percent_pledged >= 1)
+ggplot(data=sdf2,mapping = aes(percent_pledged)) + geom_histogram(bins=100,colour="black", fill="white") + geom_density(alpha=.2, fill="#FF6666")
+```
+
+Again when you zoom in, the distribution looks less exponential. It appears that majority of Kickstarters who reach their goal reach almost exactly their goal.
+
+In conclusion:
+
+- A large proportion of Kickstarters earn close to nothing of their goal
+- Kickstarters between 10% and 90% are almost exponentially distributed
+- Kickstarters who land between 90% and 110% are largely centered att 100% (i.e. Kickstarters tend to reach their goal exactly
+- There are a few outliers that exceeded their goal by a lot, which throws off the over all distribution
+
+## K Selection Using Validation
+
+Using number of backers as a predictor of success or failure, I used Validation to select the optimal K for K-Nearest Neighboors
+
+```{r}
+set.seed(11)
+library(class)
+train <- sample(seq_len(nrow(sdf)), size = .7*nrow(sdf))
+val.percents=rep(NA,10)
+for(i in 1:10){
+  knn.pred = knn(cbind(sdf[train,]$backers_count),cbind(sdf[-train,]$backers_count),sdf[train,]$state,k=i)
+  val.percents[i]=mean(knn.pred==sdf[-train,]$state)
+}
+plot(val.percents,ylab="Percent Correct", pch=20,type="b")
+which.max(val.percents)
+```
+
+According to validation, K=9 yields the highest percentage correct.
+
+Let's try it out:
+
+```{r}
+knn.pred = knn(cbind(sdf[train,]$backers_count),cbind(sdf[-train,]$backers_count),sdf[train,]$state,k=which.max(val.percents))
+mean(knn.pred==sdf[-train,]$state)
+```
+
+The model classifies the Kickstarters with an accuracy of about 83%, meaning this is a very good model. Let's look at the distribution of percent correct across K's:
+
+```{r}
+summary(val.percents)
+```
+
+The summary shows that the difference between the best K and worst K is only about 1% difference in accuracy, which is essentially negligible. In other words, choice of K is not very important in this model.
+
+Let's look at why number of backers is a good predictor of success:
+
+```{r}
+ggplot(data=sdf, mapping=aes(x=state, y=backers_count)) + geom_boxplot()
+```
+
+Because of the extreme outliers, looking at the boxplot does not help us visualize the data, so let's restrict it to the 1st and 3rd quartile:
+
+```{r}
+sdf1 <- dplyr::filter(sdf,backers_count > 14 & backers_count < 78)
+ggplot(data=sdf1, mapping=aes(x=state, y=backers_count)) + geom_boxplot()
+```
+
+Looking at the boxplot, the number of backs for successful campaigns tends to be 
+higher than failed campaigns, which makes sense.
+
+## Percentage of goal reached as a classification problem
+
+After looking at the distribution of percentage of goal reached, I thought it would be more useful to treat it as a classification problem. So I divided the data into three subsets: between 0% and 50% of goal reached, 50% to 100% of goal reached, and 100% + of goal reached. First, let's set up the data:
+
+```{r}
+sdf_class <- dplyr::mutate(sdf, net_pledged = pledged-goal,
+                                percent_pledged = pledged/goal,
+                                diff_create_launch=as.numeric(as.Date(as.character(sdf$launched_at), format='%m/%d/%Y') - as.Date(as.character(sdf$created_at), format='%m/%d/%Y')))
+
+sdf_class <- dplyr::mutate(sdf_class, class_percent = ifelse(percent_pledged < .5, 'less than 50 percent',
+                                                             ifelse(percent_pledged >= .5 & percent_pledged < 1, '50 to 100 percent',
+                                                             'reached goal')))
+```
+
+Now let's split the data into a training and test set. I used a stratified sampling method to ensure that each class is represented in both the training and testing set:
+
+```{r}
+set.seed(5)
+library(splitstackshape)
+train <- stratified(sdf_class, c('class_percent'), size=.7)
+test <- subset(sdf_class, !is.element(sdf_class$X,train$X))
+```
+
+Now let's used QDA:
+
+```{r}
+qda.fit <- qda(class_percent~backers_count, data=train)
+qda.fit
+qda.pred = data.frame(predict(qda.fit, test))
+mean(qda.pred$class==test$class_percent)
+```
+
+
+The model predicts the correct class with an accuracy of about 75%, which significantly is better than classification by chance (33%). 
+
+Let's look at the distribution of backers by class. To make the plot more readable I excluded outliers over 5000.
+
+```{r}
+ggplot(data = subset(sdf_class,sdf_class$backers_count<5000), mapping=aes(x=class_percent,y=backers_count)) + geom_boxplot()
+```
+
+Looking at the boxplot, it's clear that successful Kickstarters has generally more backers than Kickstarters that lie in the 50% too 100% range, which have more backers than the 0% to 50% range.
+
